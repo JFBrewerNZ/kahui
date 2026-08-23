@@ -235,9 +235,16 @@ Honestly, so the roadmap is not mistaken for the present tense:
 
 ## Notes for running elsewhere
 
-**Linux (including a DigitalOcean droplet):** identical commands. Open the port you pass
-to `--port` on both TCP and UDP. `--no-mdns` is worth setting on a cloud VM, where local
-discovery finds nothing but still chatters.
+**Linux, including a cloud VM:** see [running on a server](docs/running-on-a-server.md)
+for the full walkthrough — firewall, systemd unit, and how to test between a laptop and a
+droplet. Short version: open your `--port` on both TCP and UDP, and pass `--no-mdns`,
+since local discovery finds nothing on a cloud VM but still chatters.
+
+A machine with a public address is worth having in a community *today*, because relay
+support is not built yet and nodes behind home routers cannot accept incoming
+connections. One reachable member is enough for everyone else to dial in. That member is
+not a server — same events, same powers, and the community survives losing it — it is
+just the member most likely to be awake.
 
 **Windows + Git Bash:** two things bite, and `scripts/demo.sh` handles both.
 
