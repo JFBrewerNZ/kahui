@@ -3,3 +3,6 @@
 /.kahui-demo
 *.redb
 .DS_Store
+
+# Scratch output from the CI licence check when run locally.
+metadata.json

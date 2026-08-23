@@ -1,0 +1,233 @@
+name: Release
+
+# Cut a release by pushing a tag:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# Builds a self-contained binary for every supported platform and attaches them,
+# with checksums, to a GitHub release. Nothing here needs a signing key or a
+# hosted service; anyone with a fork can produce identical artifacts.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    # Git Bash on Windows too, so one script works on every runner.
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      # One platform failing should not deny everybody else a download.
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows (x86-64)
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+
+          # Statically linked against musl, so one binary runs on any Linux
+          # distribution regardless of its glibc version.
+          - label: Linux (x86-64, static)
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar
+
+          # Kept alongside the static build as a fallback, in case anything ever
+          # needs the system allocator or glibc's resolver.
+          - label: Linux (x86-64, glibc)
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar
+
+          - label: macOS (Apple Silicon)
+            os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar
+
+          - label: macOS (Intel)
+            os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG"          >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"  >> "$GITHUB_OUTPUT"
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add ${{ matrix.target }}
+
+      - name: Install musl tooling
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: release-${{ matrix.target }}-
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p kahui-cli
+
+      - name: Check it runs
+        # Cross-built targets cannot be executed here; the native ones can, and
+        # a binary that will not start is worth catching before it is published.
+        if: matrix.target != 'x86_64-unknown-linux-musl' || runner.arch == 'X64'
+        run: ./target/${{ matrix.target }}/release/kahui --version
+
+      - name: Package
+        id: package
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          STAGE="kahui-${VERSION}-${TARGET}"
+          mkdir -p "dist/$STAGE"
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cp "target/$TARGET/release/kahui.exe" "dist/$STAGE/"
+          else
+            cp "target/$TARGET/release/kahui" "dist/$STAGE/"
+          fi
+          cp README.md LICENSE CONTRIBUTING.md "dist/$STAGE/"
+
+          cd dist
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "$STAGE.zip" "$STAGE" > /dev/null
+            echo "asset=dist/$STAGE.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar czf "$STAGE.tar.gz" "$STAGE"
+            echo "asset=dist/$STAGE.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kahui-${{ matrix.target }}
+          path: ${{ steps.package.outputs.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd staging
+          ls -la
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Write release notes
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          cat > notes.md <<NOTES
+          Kāhui is an open-source, decentralised alternative to Discord where communities
+          are hosted by their members. Running this binary makes your machine part of every
+          community you have joined. There is nothing to sign up for.
+
+          ## Install
+
+          Download the file for your platform below, unpack it, and run \`kahui\`.
+
+          | Platform | File |
+          |---|---|
+          | Windows | \`kahui-${VERSION}-x86_64-pc-windows-msvc.zip\` |
+          | Linux | \`kahui-${VERSION}-x86_64-unknown-linux-musl.tar.gz\` (static, runs anywhere) |
+          | macOS, Apple Silicon | \`kahui-${VERSION}-aarch64-apple-darwin.tar.gz\` |
+          | macOS, Intel | \`kahui-${VERSION}-x86_64-apple-darwin.tar.gz\` |
+
+          On Linux and macOS:
+
+          \`\`\`bash
+          tar xzf kahui-${VERSION}-<your-platform>.tar.gz
+          cd kahui-${VERSION}-<your-platform>
+          chmod +x kahui
+          ./kahui
+          \`\`\`
+
+          macOS will refuse an unsigned binary on first run: **System Settings → Privacy &
+          Security → Open Anyway**. The project has no Apple developer certificate, and
+          buying one would mean a company standing between you and the software.
+
+          ## Then
+
+          \`\`\`
+          /create My Community      # prints an invite to share
+          /join kahui1...           # join someone else's
+          /help                     # everything else
+          \`\`\`
+
+          Verify your download against \`SHA256SUMS\`. Every artifact here was built from
+          this tag by a public workflow you can read in \`.github/workflows/release.yml\`.
+
+          ---
+          NOTES
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" staging/* --clobber
+          else
+            gh release create "$TAG" staging/* \
+              --title "Kāhui $TAG" \
+              --notes-file notes.md \
+              --generate-notes \
+              --target "$GITHUB_SHA"
+          fi

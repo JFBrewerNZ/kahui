@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kāhui — a Discord alternative hosted by its members</title>
+<meta name="description" content="An open-source, decentralised alternative to Discord. Communities are hosted by their members, not by a company. No server, no account, no backend.">
+<link rel="icon" href="kahui.svg" type="image/svg+xml">
+<meta property="og:title" content="Kāhui">
+<meta property="og:description" content="An open-source, decentralised alternative to Discord where communities are hosted by their members, not by a company.">
+<meta property="og:type" content="website">
+<style>
+  /* A night sky, deliberately. The subject is a star cluster and the palette
+     commits to it rather than trying to be two designs at once. */
+  :root {
+    --bg: #0a0e17;
+    --panel: #121a2a;
+    --line: #24304a;
+    --text: #e9eef7;
+    --muted: #96a3c0;
+    --star: #f4c65a;
+    --star-dim: #b8913c;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    /* A faint glow behind the header, like light pollution from a cluster. */
+    background-image: radial-gradient(60rem 30rem at 50% -8rem, #16203a 0%, transparent 70%);
+    background-repeat: no-repeat;
+  }
+
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem; }
+
+  header { text-align: center; padding: 4.5rem 0 2.5rem; }
+  header svg { width: 84px; height: 84px; }
+
+  h1 {
+    font-size: clamp(2.6rem, 8vw, 3.6rem);
+    margin: 1rem 0 0.35rem;
+    letter-spacing: -0.02em;
+    font-weight: 650;
+  }
+
+  .tagline { color: var(--muted); font-size: 1.15rem; margin: 0 0 0.4rem; }
+
+  .pitch { font-size: 1.05rem; margin: 2rem 0; }
+  .pitch strong { color: var(--star); font-weight: 600; }
+
+  h2 {
+    font-size: 1.05rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--muted);
+    font-weight: 600;
+    margin: 3.5rem 0 1rem;
+  }
+
+  .downloads {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.75rem;
+    margin: 1rem 0;
+  }
+
+  .dl {
+    display: block;
+    padding: 0.95rem 1rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color .15s, transform .15s;
+  }
+  .dl:hover { border-color: var(--star-dim); transform: translateY(-1px); }
+  .dl[data-yours="true"] { border-color: var(--star); }
+  .dl b { display: block; font-size: 1rem; font-weight: 600; }
+  .dl span { display: block; color: var(--muted); font-size: 0.85rem; font-family: var(--mono); }
+  .dl[data-yours="true"] b::after {
+    content: " — your platform";
+    color: var(--star);
+    font-weight: 500;
+  }
+
+  .fineprint { color: var(--muted); font-size: 0.9rem; }
+
+  pre {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+  pre .c { color: var(--muted); }
+  pre .p { color: var(--star); }
+
+  ul.how { list-style: none; padding: 0; }
+  ul.how li { margin: 0 0 1.4rem; padding-left: 1.6rem; position: relative; }
+  ul.how li::before {
+    content: "";
+    position: absolute; left: 0; top: 0.62em;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--star);
+  }
+  ul.how b { color: var(--text); }
+
+  .note {
+    border-left: 3px solid var(--star-dim);
+    background: var(--panel);
+    padding: 1rem 1.15rem;
+    border-radius: 0 10px 10px 0;
+    color: var(--muted);
+    margin: 1rem 0;
+  }
+  .note b { color: var(--text); }
+
+  a { color: var(--star); }
+
+  footer {
+    margin: 5rem 0 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.9rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <svg viewBox="0 0 64 64" role="img" aria-label="">
+    <g stroke="#7f93bb" stroke-width="1.9" stroke-linecap="round" opacity="0.5" fill="none">
+      <path d="M14 20 L31 11"/><path d="M31 11 L48 21"/><path d="M14 20 L21 37"/>
+      <path d="M21 37 L40 37"/><path d="M40 37 L48 21"/><path d="M40 37 L53 47"/>
+      <path d="M21 37 L28 53"/><path d="M28 53 L40 37"/>
+    </g>
+    <g fill="#f4c65a">
+      <circle cx="31" cy="11" r="5"/><circle cx="40" cy="37" r="5.4"/>
+      <circle cx="21" cy="37" r="4.4"/><circle cx="14" cy="20" r="4"/>
+      <circle cx="28" cy="53" r="4"/><circle cx="48" cy="21" r="3.6"/>
+      <circle cx="53" cy="47" r="3.4"/>
+    </g>
+  </svg>
+  <h1>Kāhui</h1>
+  <p class="tagline">Discord, in case the world ends.</p>
+</header>
+
+<p class="pitch">
+  An open-source alternative to Discord where communities are hosted by
+  <strong>their members</strong>, not by a company. When you join a Kāhui server, your
+  device becomes part of that community's network — members collectively store the
+  history and keep the server alive. There is no central database, no login server, and
+  nothing to sign up for.
+</p>
+
+<p class="pitch">
+  If this project, its website and its developers disappeared tomorrow, existing
+  communities would keep running.
+</p>
+
+<h2>Download</h2>
+
+<div class="downloads" id="downloads">
+  <a class="dl" data-os="win"   href="https://github.com/JFBrewerNZ/kahui/releases/latest">
+    <b>Windows</b><span>x86-64</span></a>
+  <a class="dl" data-os="linux" href="https://github.com/JFBrewerNZ/kahui/releases/latest">
+    <b>Linux</b><span>x86-64, static</span></a>
+  <a class="dl" data-os="mac"   href="https://github.com/JFBrewerNZ/kahui/releases/latest">
+    <b>macOS</b><span>Apple Silicon</span></a>
+  <a class="dl" data-os="macx"  href="https://github.com/JFBrewerNZ/kahui/releases/latest">
+    <b>macOS</b><span>Intel</span></a>
+</div>
+
+<p class="fineprint">
+  One file, no installer, no account. Windows and macOS will warn that it is unsigned —
+  the project has no code-signing certificate, because buying one would put a company
+  between you and the software. Checksums are published with every release.
+</p>
+
+<h2>Two minutes</h2>
+
+<pre><span class="c"># start it</span>
+./kahui
+
+<span class="p">&gt;</span> /create Aotearoa
+invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
+
+<span class="c"># send that line to a friend. on their machine:</span>
+<span class="p">&gt;</span> /join kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
+<span class="p">&gt;</span> kia ora
+</pre>
+
+<p class="fineprint">
+  That invite is the only bootstrap step in the system. It is a hint about where to look,
+  not a credential — everything it points at is verified against signatures once fetched.
+</p>
+
+<h2>How it works</h2>
+
+<ul class="how">
+  <li>
+    <b>A community is a log of signed events.</b> Every message, channel and join is one
+    event, signed with a key that never leaves your machine. Because each event proves its
+    own authorship, your node can accept history from any peer without trusting that peer
+    — which is what removes the server, rather than relocating it.
+  </li>
+  <li>
+    <b>Catching up costs one round trip.</b> Each member's events form a numbered chain,
+    so "everything I have from Alice" is a single number. Send that, receive what it does
+    not cover. It costs the same after five months offline as after five minutes.
+  </li>
+  <li>
+    <b>Nobody is load-bearing, including the founder.</b> Members tell each other where
+    they are, so the network fills in to a mesh within seconds of you joining. Close the
+    laptop that created the community and everyone else keeps talking.
+  </li>
+</ul>
+
+<h2>Where it is up to</h2>
+
+<div class="note">
+  <b>Milestone 1: a working command-line client.</b> The protocol, storage, networking and
+  sync are real, tested, and do everything described above. There is no graphical client
+  yet, and no voice, roles or moderation. Nodes behind strict home routers cannot reach
+  each other across the internet yet — relay support is next. The
+  <a href="https://github.com/JFBrewerNZ/kahui/blob/main/docs/architecture.md">architecture
+  notes</a> list every known limitation plainly, because a decentralised system that
+  overstates its guarantees is worse than a centralised one that does not.
+</div>
+
+<footer>
+  <span><a href="https://github.com/JFBrewerNZ/kahui">Source on GitHub</a></span>
+  <span><a href="https://github.com/JFBrewerNZ/kahui/blob/main/LICENSE">AGPL-3.0-or-later</a></span>
+  <span>Aotearoa New Zealand</span>
+</footer>
+
+</div>
+
+<script>
+// Two small enhancements, both optional. Without JavaScript every button still
+// goes to the releases page, which is the thing that must never break.
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.dl'));
+
+  // Highlight the platform you are probably on.
+  var ua = navigator.userAgent;
+  var guess = /Windows/i.test(ua) ? 'win'
+            : /Mac/i.test(ua)     ? 'mac'
+            : /Linux|X11/i.test(ua) ? 'linux'
+            : null;
+  if (guess) {
+    links.forEach(function (a) {
+      if (a.dataset.os === guess) a.dataset.yours = 'true';
+    });
+  }
+
+  // Turn each button into a direct download once we know the latest version.
+  var suffix = {
+    win:   'x86_64-pc-windows-msvc.zip',
+    linux: 'x86_64-unknown-linux-musl.tar.gz',
+    mac:   'aarch64-apple-darwin.tar.gz',
+    macx:  'x86_64-apple-darwin.tar.gz'
+  };
+  fetch('https://api.github.com/repos/JFBrewerNZ/kahui/releases/latest')
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (release) {
+      var assets = release.assets || [];
+      links.forEach(function (a) {
+        var want = suffix[a.dataset.os];
+        var hit = assets.filter(function (x) { return x.name.endsWith(want); })[0];
+        if (hit) a.href = hit.browser_download_url;
+      });
+    })
+    .catch(function () { /* leave the links pointing at the releases page */ });
+})();
+</script>
+</body>
+</html>

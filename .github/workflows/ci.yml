@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes whatever was already running for the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Nothing here should reach the network at runtime; a failure to build is a
+  # real failure, not something to paper over with retries.
+  CARGO_NET_RETRY: 2
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: Format and lints
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: lint-${{ runner.os }}-
+
+      - run: cargo fmt --all --check
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: test-${{ runner.os }}-
+
+      - run: cargo test --workspace --all-targets
+
+      - name: Doc tests
+        run: cargo test --workspace --doc
+
+  demo:
+    name: Three-node demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: demo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: demo-${{ runner.os }}-
+
+      # Three real processes, three real databases, real sockets. The unit tests
+      # can pass while the thing that matters is broken; this is what catches
+      # that.
+      - name: Run the milestone end to end
+        run: bash scripts/demo.sh
+
+      - name: Node logs on failure
+        if: failure()
+        run: |
+          for log in .kahui-demo/*.log; do
+            echo "::group::$log"
+            tail -100 "$log" || true
+            echo "::endgroup::"
+          done
+
+  licences:
+    name: Dependency licences
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
+      # Kahui is AGPL-3.0-or-later, which every dependency must be compatible
+      # with. Everything in the tree today is permissive; this fails the build if
+      # something copyleft or unlicensed appears, rather than discovering it at
+      # release time.
+      - name: Check every dependency is AGPL-compatible
+        run: |
+          cargo metadata --format-version 1 > metadata.json
+          python3 - <<'PY'
+          import json, sys
+
+          ALLOWED_TOKENS = {
+              "MIT", "APACHE-2.0", "BSD-2-CLAUSE", "BSD-3-CLAUSE", "ISC", "ZLIB",
+              "MPL-2.0", "UNLICENSE", "CC0-1.0", "UNICODE-3.0", "UNICODE-DFS-2016",
+              "0BSD", "BSL-1.0", "OPENSSL", "AGPL-3.0-OR-LATER",
+              "LLVM-EXCEPTION", "APACHE-2.0 WITH LLVM-EXCEPTION",
+              # Offered as one option among permissive alternatives.
+              "LGPL-2.1-OR-LATER",
+          }
+
+          def acceptable(expr):
+              # An SPDX "OR" only needs one acceptable branch; "AND" needs all.
+              for alternative in expr.upper().split(" OR "):
+                  parts = [p.strip(" ()") for p in alternative.split(" AND ")]
+                  if all(any(t == p or t in p for t in ALLOWED_TOKENS) for p in parts):
+                      return True
+              return False
+
+          bad = []
+          for pkg in json.load(open("metadata.json"))["packages"]:
+              lic = pkg.get("license")
+              if not lic:
+                  if pkg.get("license_file"):
+                      continue  # carries its own text; checked by hand
+                  bad.append((pkg["name"], "UNSPECIFIED"))
+              elif not acceptable(lic.replace("/", " OR ")):
+                  bad.append((pkg["name"], lic))
+
+          if bad:
+              print("Dependencies that are not clearly AGPL-compatible:")
+              for name, lic in sorted(bad):
+                  print(f"  {name}: {lic}")
+              sys.exit(1)
+          print("All dependency licences are AGPL-compatible.")
+          PY

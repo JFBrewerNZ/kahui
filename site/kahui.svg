@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kahui">
+  <title>Kahui</title>
+  <!--
+    A cluster of stars, joined to each other.
+
+    "Kahui" means a cluster or flock, and the same shape happens to be what a
+    peer-to-peer community looks like: every node linked to several others, and
+    no node in the middle. Delete any single star here and the rest stay joined
+    up, which is the entire claim the project makes.
+  -->
+  <g stroke="#7f93bb" stroke-width="1.9" stroke-linecap="round" opacity="0.5" fill="none">
+    <path d="M14 20 L31 11" />
+    <path d="M31 11 L48 21" />
+    <path d="M14 20 L21 37" />
+    <path d="M21 37 L40 37" />
+    <path d="M40 37 L48 21" />
+    <path d="M40 37 L53 47" />
+    <path d="M21 37 L28 53" />
+    <path d="M28 53 L40 37" />
+  </g>
+  <g fill="#f4c65a">
+    <circle cx="31" cy="11" r="5" />
+    <circle cx="40" cy="37" r="5.4" />
+    <circle cx="21" cy="37" r="4.4" />
+    <circle cx="14" cy="20" r="4" />
+    <circle cx="28" cy="53" r="4" />
+    <circle cx="48" cy="21" r="3.6" />
+    <circle cx="53" cy="47" r="3.4" />
+  </g>
+</svg>

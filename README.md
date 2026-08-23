@@ -1,5 +1,9 @@
 # Kāhui
 
+[![CI](https://github.com/JFBrewerNZ/kahui/actions/workflows/ci.yml/badge.svg)](https://github.com/JFBrewerNZ/kahui/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/JFBrewerNZ/kahui?display_name=tag&label=download)](https://github.com/JFBrewerNZ/kahui/releases/latest)
+[![Licence](https://img.shields.io/badge/licence-AGPL--3.0--or--later-f4c65a)](LICENSE)
+
 **An open-source, decentralised alternative to Discord where communities are hosted by their members, not by a company.**
 
 When you join a Kāhui server, your device becomes part of that community's network.
@@ -13,6 +17,25 @@ communities would keep running.
 > **Status: milestone 1 — CLI prototype.** The protocol, storage, networking and node
 > engine are real and tested. There is no GUI yet, and no voice, roles or moderation.
 > See [What is not built yet](#what-is-not-built-yet).
+
+---
+
+## Download
+
+[**Get the latest release →**](https://github.com/JFBrewerNZ/kahui/releases/latest) ·
+[project site](https://jfbrewernz.github.io/kahui/)
+
+| Platform | File |
+|---|---|
+| Windows | `…-x86_64-pc-windows-msvc.zip` |
+| Linux | `…-x86_64-unknown-linux-musl.tar.gz` — statically linked, runs on any distribution |
+| macOS (Apple Silicon) | `…-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `…-x86_64-apple-darwin.tar.gz` |
+
+One file, no installer, no account. Windows and macOS will warn that it is unsigned —
+there is no code-signing certificate, because buying one would put a company between you
+and the software. Every release ships `SHA256SUMS`, and every artifact is built from its
+tag by [a workflow you can read](.github/workflows/release.yml).
 
 ---
 
@@ -166,9 +189,12 @@ protocol, and the reasoning behind each choice.
 ## Testing
 
 ```bash
-cargo test --workspace     # 71 tests
+cargo test --workspace     # 73 tests
 bash scripts/demo.sh       # the milestone, live, in three processes
 ```
+
+CI runs the tests on Linux, Windows and macOS, runs the demo on Linux, and fails the
+build if a dependency appears whose licence is not AGPL-compatible.
 
 The interesting tests are:
 
@@ -258,6 +284,6 @@ friction on outside contributions, so it is worth deciding before the project ha
 
 ### Contributing
 
-By contributing you agree your work is licensed under AGPL-3.0-or-later. Every dependency
-in the tree is permissively licensed (MIT, Apache-2.0, BSD, MPL-2.0, Zlib) and therefore
-compatible; please keep it that way, and check any new dependency before adding it.
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: contributions are AGPL-3.0-or-later,
+there is deliberately no contributor licence agreement, and every dependency must be
+licence-compatible — CI enforces the last one.
