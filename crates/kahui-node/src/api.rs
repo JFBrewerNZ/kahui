@@ -184,6 +184,13 @@ pub(crate) enum Command {
         display_name: String,
         reply: Reply<()>,
     },
+    BackupPhrase {
+        reply: Reply<String>,
+    },
+    ReplaceIdentity {
+        phrase: String,
+        reply: Reply<()>,
+    },
     MakeInvite {
         community: CommunityId,
         reply: Reply<Invite>,
@@ -353,6 +360,36 @@ impl NodeHandle {
                 display_name,
                 reply,
             },
+            DEFAULT_COMMAND_TIMEOUT,
+        )
+        .await
+    }
+
+    /// This node's identity, as a line of text that can be written down.
+    ///
+    /// Whoever holds it can post as this member, in every community, forever.
+    /// It is also the only way to be the same person on another machine, or to
+    /// come back after losing this one — there is nobody to ask for a reset.
+    pub async fn backup_phrase(&self) -> Result<String, NodeError> {
+        self.call(
+            |reply| Command::BackupPhrase { reply },
+            DEFAULT_COMMAND_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Adopts an identity from a backup phrase.
+    ///
+    /// Refused once this node belongs to a community: the events it has already
+    /// signed are the old identity's, and swapping underneath them would leave
+    /// a member nobody can account for. Restoring onto a fresh install is the
+    /// case this exists for.
+    ///
+    /// The node must be restarted afterwards to pick it up.
+    pub async fn replace_identity(&self, phrase: impl Into<String>) -> Result<(), NodeError> {
+        let phrase = phrase.into();
+        self.call(
+            |reply| Command::ReplaceIdentity { phrase, reply },
             DEFAULT_COMMAND_TIMEOUT,
         )
         .await

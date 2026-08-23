@@ -18,12 +18,20 @@ pub const SIGNATURE_LEN: usize = 64;
 /// A signature over an event preimage.
 pub type SignatureBytes = [u8; SIGNATURE_LEN];
 
+/// Prefix on a backed-up key, so it is recognisable and hard to confuse with an
+/// invite.
+pub const KEY_PREFIX: &str = "kahuikey1";
+
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {
     #[error("secret key must be {SECRET_LEN} bytes, got {0}")]
     BadSecretLength(usize),
     #[error("public key is not a valid Ed25519 point")]
     BadPublicKey,
+    #[error("a key starts with `{KEY_PREFIX}`")]
+    NotAKey,
+    #[error("that key is not valid base58: {0}")]
+    BadBase58(#[from] bs58::decode::Error),
 }
 
 /// A keypair capable of authoring events.
@@ -67,6 +75,30 @@ impl Identity {
 
     pub fn sign(&self, message: &[u8]) -> SignatureBytes {
         self.signing.sign(message).to_bytes()
+    }
+
+    /// The identity as a single line of text, for writing down.
+    ///
+    /// This *is* the identity, not a hint about where to find it. Whoever holds
+    /// it can post as you, in every community you belong to, forever — there is
+    /// no server to revoke it at and no password layered on top. It is also the
+    /// only way to be the same person on a second machine, or to come back
+    /// after losing this one.
+    pub fn to_backup_phrase(&self) -> String {
+        format!(
+            "{KEY_PREFIX}{}",
+            bs58::encode(self.secret_bytes()).into_string()
+        )
+    }
+
+    /// Restores an identity from [`Identity::to_backup_phrase`].
+    pub fn from_backup_phrase(text: &str) -> Result<Self, IdentityError> {
+        let body = text
+            .trim()
+            .strip_prefix(KEY_PREFIX)
+            .ok_or(IdentityError::NotAKey)?;
+        let bytes = bs58::decode(body).into_vec()?;
+        Identity::from_secret(&bytes)
     }
 }
 
@@ -113,6 +145,28 @@ mod tests {
         let b = Identity::generate();
         let sig = a.sign(b"kia ora");
         assert!(!verify(&b.user_id(), b"kia ora", &sig));
+    }
+
+    #[test]
+    fn a_backup_phrase_restores_the_same_identity() {
+        let original = Identity::generate();
+        let phrase = original.to_backup_phrase();
+        assert!(phrase.starts_with(KEY_PREFIX));
+        let restored = Identity::from_backup_phrase(&phrase).unwrap();
+        assert_eq!(restored.user_id(), original.user_id());
+
+        // And it still signs as the same person.
+        let signature = restored.sign(b"kia ora");
+        assert!(verify(&original.user_id(), b"kia ora", &signature));
+    }
+
+    #[test]
+    fn text_that_is_not_a_key_is_refused() {
+        assert!(matches!(
+            Identity::from_backup_phrase("kahui1aaaa"),
+            Err(IdentityError::NotAKey)
+        ));
+        assert!(Identity::from_backup_phrase("kahuikey1!!!!").is_err());
     }
 
     #[test]

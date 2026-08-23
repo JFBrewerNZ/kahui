@@ -14,6 +14,7 @@ import {
   onFailed,
   onNodeEvent,
   onReady,
+  type Ready,
   type ChannelSummary,
   type CommunitySummary,
   type Id,
@@ -30,6 +31,9 @@ class Kahui {
   phase = $state<"starting" | "ready" | "failed">("starting");
   fatal = $state("");
   notice = $state("");
+  /// Seconds spent starting, so a slow start can say so rather than just sit there.
+  waiting = $state(0);
+  startupNote = $state("");
 
   status = $state<Status | null>(null);
   dataDir = $state("");
@@ -48,6 +52,10 @@ class Kahui {
   unread = $state<Record<Id, number>>({});
   /** True while a join is fetching history, which can take a few seconds. */
   busy = $state("");
+
+  /// True when this device belongs to nothing yet, which is both the empty
+  /// state and the moment to explain what an identity here even is.
+  fresh = $derived(this.phase === "ready" && this.communities.length === 0);
 
   community = $derived(this.communities.find((c) => c.id === this.communityId) ?? null);
   channel = $derived(this.channels.find((c) => c.id === this.channelId) ?? null);
@@ -82,25 +90,63 @@ class Kahui {
   me = $derived(this.status?.user ?? "");
 
   async init() {
-    await onReady(async (ready) => {
-      this.status = ready.status;
-      this.dataDir = ready.dataDir;
-      this.phase = "ready";
-      await this.loadCommunities();
-      // Drop straight into a community if this node already belongs to one.
-      if (!this.communityId && this.communities.length > 0) {
-        await this.selectCommunity(this.communities[0].id);
-      }
-    });
+    // Ask before listening. The node routinely finishes starting before this
+    // window has loaded, so the answer is usually already waiting; and doing
+    // the one call that matters first means a broken connection to the Rust
+    // side shows up here rather than as a screen that never changes.
+    await this.pollStartup();
 
-    await onFailed((err) => {
-      this.phase = "failed";
-      this.fatal = err.message;
-    });
-
-    await onNodeEvent((event) => void this.apply(event));
+    // Live updates are an improvement on the answer above, not a substitute
+    // for it, so a failure to subscribe is worth saying but not worth stopping
+    // for.
+    try {
+      await onReady((ready) => void this.becomeReady(ready));
+      await onFailed((err) => {
+        this.phase = "failed";
+        this.fatal = err.message;
+      });
+      await onNodeEvent((event) => void this.apply(event));
+    } catch (err) {
+      this.notice = `Live updates are unavailable: ${errorText(err)}`;
+    }
 
     setInterval(() => void this.refreshStatus(), STATUS_INTERVAL);
+  }
+
+  /// Asks how startup is going, until it is no longer going.
+  private async pollStartup() {
+    const began = Date.now();
+    while (this.phase === "starting") {
+      try {
+        const startup = await api.startupState();
+        if (startup.phase === "ready") {
+          await this.becomeReady(startup);
+          return;
+        }
+        if (startup.phase === "failed") {
+          this.phase = "failed";
+          this.fatal = startup.message;
+          return;
+        }
+      } catch (err) {
+        // The Rust side is not answering at all, which is a different and
+        // worse problem than the node being slow.
+        this.startupNote = `The window cannot reach the node: ${errorText(err)}`;
+      }
+      this.waiting = Math.round((Date.now() - began) / 1000);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+
+  private async becomeReady(ready: Ready) {
+    this.status = ready.status;
+    this.dataDir = ready.dataDir;
+    this.phase = "ready";
+    await this.loadCommunities();
+    // Drop straight into a community if this node already belongs to one.
+    if (!this.communityId && this.communities.length > 0) {
+      await this.selectCommunity(this.communities[0].id);
+    }
   }
 
   private async refreshStatus() {
@@ -269,6 +315,21 @@ class Kahui {
     await api.setDisplayName(name);
     this.status = await api.status();
     await this.loadMembers();
+  }
+
+  async backupPhrase() {
+    return api.backupPhrase();
+  }
+
+  async restoreIdentity(phrase: string) {
+    await api.restoreIdentity(phrase);
+    // The node came back as somebody else, so everything on screen is stale.
+    this.phase = "starting";
+    this.waiting = 0;
+    this.communities = [];
+    this.communityId = null;
+    this.channelId = null;
+    await this.pollStartup();
   }
 
   /** Surfaces a problem without derailing whatever the user was doing. */

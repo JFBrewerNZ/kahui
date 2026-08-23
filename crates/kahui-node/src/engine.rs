@@ -1039,6 +1039,14 @@ impl Engine {
                 let _ = reply.send(self.set_display_name(display_name));
             }
 
+            Command::BackupPhrase { reply } => {
+                let _ = reply.send(Ok(self.identity.to_backup_phrase()));
+            }
+
+            Command::ReplaceIdentity { phrase, reply } => {
+                let _ = reply.send(self.replace_identity(&phrase));
+            }
+
             Command::MakeInvite { community, reply } => {
                 let _ = reply.send(self.make_invite(community));
             }
@@ -1196,6 +1204,24 @@ impl Engine {
                 });
             }
         }
+    }
+
+    /// Writes a different identity to disk, for the next start.
+    ///
+    /// Only while nothing has been signed under the current one. After that the
+    /// node's own chain is the old identity's, and quietly continuing it under
+    /// a new key would produce events that verify against nobody.
+    fn replace_identity(&mut self, phrase: &str) -> Result<(), NodeError> {
+        if !self.store.communities()?.is_empty() {
+            return Err(NodeError::Engine(
+                "This device already belongs to a community, and the messages it has                  sent are signed by its current identity. Restore a key onto a fresh                  install instead."
+                    .into(),
+            ));
+        }
+        let restored = kahui_proto::Identity::from_backup_phrase(phrase)?;
+        self.store
+            .meta_put(crate::META_IDENTITY, &restored.secret_bytes())?;
+        Ok(())
     }
 
     fn set_display_name(&mut self, display_name: String) -> Result<(), NodeError> {

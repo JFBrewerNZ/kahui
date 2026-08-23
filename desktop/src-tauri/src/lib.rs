@@ -74,10 +74,26 @@ impl From<kahui_node::InviteError> for UiError {
     }
 }
 
+/// How far the node has got.
+///
+/// Kept as state rather than only announced as an event. The window cannot
+/// subscribe until its JavaScript has loaded, and the node routinely finishes
+/// starting before that — so an interface that only listened would wait forever
+/// for something that had already happened. Asking cannot race.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum Startup {
+    #[default]
+    Starting,
+    Ready(Ready),
+    Failed(UiError),
+}
+
 /// Holds the node once it has started.
 #[derive(Default)]
 pub struct NodeState {
     handle: RwLock<Option<NodeHandle>>,
+    startup: RwLock<Startup>,
 }
 
 impl NodeState {
@@ -106,6 +122,7 @@ fn data_dir() -> PathBuf {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ready {
+    // (kept cloneable so startup state and the event can share one value)
     pub status: Status,
     pub data_dir: String,
 }
@@ -138,15 +155,17 @@ async fn start_node(app: AppHandle) -> Result<(), UiError> {
     });
 
     let status = node.status().await?;
-    *app.state::<NodeState>().handle.write().await = Some(node);
+    let state = app.state::<NodeState>();
+    *state.handle.write().await = Some(node);
 
-    let _ = app.emit(
-        READY_EVENT,
-        Ready {
-            status,
-            data_dir: dir.display().to_string(),
-        },
-    );
+    let ready = Ready {
+        status,
+        data_dir: dir.display().to_string(),
+    };
+    // Recorded first, announced second. A window that loads late reads the
+    // record; one that was already listening gets the event.
+    *state.startup.write().await = Startup::Ready(ready.clone());
+    let _ = app.emit(READY_EVENT, ready);
     Ok(())
 }
 
@@ -170,6 +189,70 @@ fn explain_startup_failure(err: NodeError, dir: &std::path::Path) -> UiError {
 //
 // Each is a forward to NodeHandle. If one of these grows logic, it probably
 // belongs in kahui-node instead, where every client gets it.
+
+/// Reports a crash in the window to the log.
+///
+/// A packaged desktop app has no console, so a JavaScript error that stops the
+/// interface dead is otherwise completely silent — the window simply never
+/// changes, which is indistinguishable from being slow.
+#[tauri::command]
+async fn report_web_error(message: String) -> Result<(), UiError> {
+    tracing::error!(target: "kahui_desktop_lib", "the window reported: {message}");
+    Ok(())
+}
+
+/// Puts the current community and channel in the window title.
+///
+/// The webview's own `document.title` does not reach the native window, so this
+/// has to come back through Rust. Worth having: it is what makes the window
+/// findable in a task switcher full of other windows.
+#[tauri::command]
+async fn set_window_title(title: String, app: AppHandle) -> Result<(), UiError> {
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_title(&title)
+            .map_err(|err| UiError::new(err.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Where the node has got to, asked rather than awaited.
+#[tauri::command]
+async fn startup_state(state: State<'_, NodeState>) -> Result<Startup, UiError> {
+    let startup = state.startup.read().await.clone();
+    tracing::debug!(?startup, "the window asked how startup is going");
+    Ok(startup)
+}
+
+/// This node's identity, as a line of text to write down.
+#[tauri::command]
+async fn backup_phrase(state: State<'_, NodeState>) -> Result<String, UiError> {
+    Ok(state.get().await?.backup_phrase().await?)
+}
+
+/// Adopts an identity from a backup phrase and restarts onto it.
+///
+/// Only possible before this device has joined anything: the events it has
+/// already signed belong to the identity it signed them with.
+#[tauri::command]
+async fn restore_identity(
+    phrase: String,
+    app: AppHandle,
+    state: State<'_, NodeState>,
+) -> Result<(), UiError> {
+    let node = state.get().await?;
+    node.replace_identity(phrase.trim().to_string()).await?;
+
+    // The key on disk is the new one now, but this node is still running on the
+    // old one. Stop it and come back up as the restored identity.
+    node.shutdown().await.ok();
+    drop(node);
+    {
+        *state.handle.write().await = None;
+        *state.startup.write().await = Startup::Starting;
+    }
+    start_node(app).await
+}
 
 #[tauri::command]
 async fn status(state: State<'_, NodeState>) -> Result<Status, UiError> {
@@ -338,6 +421,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(NodeState::default())
         .invoke_handler(tauri::generate_handler![
+            startup_state,
+            set_window_title,
+            report_web_error,
+            backup_phrase,
+            restore_identity,
             status,
             communities,
             channels,
@@ -353,12 +441,30 @@ pub fn run() {
             sync_now,
             dial,
         ])
+        // Whether the page loaded at all, and where from. Without this a blank
+        // window and a broken window look identical from out here.
+        .on_page_load(|window, payload| {
+            tracing::info!(
+                target: "kahui_desktop_lib",
+                url = %payload.url(),
+                event = ?payload.event(),
+                "webview page load"
+            );
+            // Hook the window's own failures back to this log.
+            let _ = window.eval(
+                "window.addEventListener('error', function (e) {                   window.__TAURI_INTERNALS__.invoke('report_web_error', {                     message: e.message + ' at ' + e.filename + ':' + e.lineno });                 });                 window.addEventListener('unhandledrejection', function (e) {                   window.__TAURI_INTERNALS__.invoke('report_web_error', {                     message: 'unhandled rejection: ' + e.reason });                 });",
+            );
+        })
         .setup(|app| {
             // Starting the node takes a moment (opening the database, binding
             // sockets), so the window paints first and is told when it is ready.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = start_node(handle.clone()).await {
+                    // Recorded before it is announced, for the same reason as
+                    // the ready case: the window may not be listening yet.
+                    *handle.state::<NodeState>().startup.write().await =
+                        Startup::Failed(err.clone());
                     let _ = handle.emit(FAILED_EVENT, err);
                 }
             });

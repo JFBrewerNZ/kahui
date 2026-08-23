@@ -21,7 +21,7 @@ partly from relays somebody operates. See `docs/architecture.md` §9.
 ## Getting set up
 
 ```bash
-cargo test --workspace     # 73 tests, a few seconds
+cargo test --workspace --exclude kahui-desktop     # 81 tests, a few seconds
 bash scripts/demo.sh       # three real nodes, ~40 seconds
 ```
 
@@ -29,15 +29,45 @@ bash scripts/demo.sh       # three real nodes, ~40 seconds
 sync. It starts three processes with three databases, kills one mid-conversation, brings
 it back, and fails loudly if the community did not survive.
 
+## Running the desktop app
+
+```bash
+cd desktop
+npm install
+npm run tauri dev          # the app, with hot reload
+npm run dev                # the interface only, in a browser, with a stand-in node
+```
+
+**Do not run the app with `cargo run` or `cargo build`.** It compiles, and it produces a
+binary that opens an empty window forever. Tauri decides at build time whether to load the
+interface from the dev server or from assets baked into the binary, and that decision is
+made by the Tauri CLI — bypass it and you get a binary pointing at a dev server that is not
+running. Nothing reports this; the window simply stays blank. `cargo clippy -p
+kahui-desktop` is fine, because it never runs anything.
+
+`npm run dev` on its own opens the interface in an ordinary browser with `src/lib/mock.ts`
+behind it. Good for layout and CSS, where waiting for a Rust rebuild is intolerable. Add
+`?welcome` to the URL to see the first-run screen. It is gated on `import.meta.env.DEV` and
+never reaches a shipped build — a packaged app missing its node should say so, not invent
+data.
+
+`npm run check` type-checks the interface *and* verifies that every call it makes lines up
+with a real Tauri command, argument names included. Neither compiler checks that boundary,
+and a mismatch there fails only at runtime, in front of a user.
+
 ## Before you open a pull request
 
 ```bash
 cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --exclude kahui-desktop -- -D warnings
+cargo clippy -p kahui-desktop --all-targets -- -D warnings   # needs a webview toolchain
+cargo test --workspace --exclude kahui-desktop
+cd desktop && npm run check
 ```
 
-CI runs all three on Linux, Windows and macOS, plus the demo on Linux.
+The desktop app is excluded from the workspace-wide commands because building it needs a
+webview toolchain, which a headless Linux box does not have by default. CI runs everything
+on Linux, Windows and macOS, plus the demo on Linux.
 
 ## What good looks like here
 

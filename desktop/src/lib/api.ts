@@ -83,6 +83,19 @@ export interface Ready {
   dataDir: string;
 }
 
+/**
+ * How far the node has got.
+ *
+ * Asked for rather than only awaited: the node usually finishes starting before
+ * this window has loaded enough JavaScript to subscribe to anything, so an
+ * interface that only listened would wait forever for an event that had already
+ * fired.
+ */
+export type Startup =
+  | { phase: "starting" }
+  | ({ phase: "ready" } & Ready)
+  | ({ phase: "failed" } & UiError);
+
 export interface UiError {
   message: string;
   transient: boolean;
@@ -134,6 +147,10 @@ const insideTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const realApi = {
+  startupState: () => invoke<Startup>("startup_state"),
+  setWindowTitle: (title: string) => invoke<void>("set_window_title", { title }),
+  backupPhrase: () => invoke<string>("backup_phrase"),
+  restoreIdentity: (phrase: string) => invoke<void>("restore_identity", { phrase }),
   status: () => invoke<Status>("status"),
   communities: () => invoke<CommunitySummary[]>("communities"),
   channels: (community: Id) => invoke<ChannelSummary[]>("channels", { community }),
@@ -171,7 +188,7 @@ export const onNodeEvent = preview
 
 export const onReady = preview
   ? async (handler: (ready: Ready) => void) => {
-      handler((await import("./mock")).mockReady);
+      handler((await import("./mock")).mockReady());
       return () => {};
     }
   : realOnReady;

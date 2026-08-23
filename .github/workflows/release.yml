@@ -210,6 +210,25 @@ jobs:
         run: npm run tauri build -- ${{ matrix.args }}
         working-directory: desktop
 
+      # A Tauri binary built without the Tauri CLI does not embed the interface
+      # at all -- it points at the dev server instead, and opens an empty window
+      # that looks exactly like a hung app. `npm run tauri build` above does it
+      # correctly, but the failure is silent, so check rather than trust.
+      #
+      # The check is for the hashed asset filename Vite just emitted: present
+      # only if the interface really was baked in.
+      - name: The interface must be embedded in the binary
+        run: |
+          ASSET=$(basename desktop/dist/assets/*.js)
+          BIN=$(find target -type f -path '*release*' -name 'kahui-desktop*' ! -name '*.d' | head -1)
+          echo "looking for $ASSET in $BIN"
+          if grep -qa "$ASSET" "$BIN"; then
+            echo "ok - the interface is embedded"
+          else
+            echo "::error::this build has no interface in it and would open an empty window"
+            exit 1
+          fi
+
       # Tauri writes installers under target/release/bundle (or under the target
       # triple when cross-compiling). Collect whatever it produced.
       - name: Collect installers

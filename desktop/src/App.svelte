@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { kahui } from "./lib/state.svelte";
+  import { api, errorText } from "./lib/api";
   import CommunityRail from "./lib/components/CommunityRail.svelte";
   import ChannelPane from "./lib/components/ChannelPane.svelte";
   import ChatPane from "./lib/components/ChatPane.svelte";
@@ -9,11 +10,39 @@
   import InviteDialog from "./lib/components/InviteDialog.svelte";
   import NewChannelDialog from "./lib/components/NewChannelDialog.svelte";
   import SettingsDialog from "./lib/components/SettingsDialog.svelte";
+  import Welcome from "./lib/components/Welcome.svelte";
 
   type Dialog = "add" | "invite" | "channel" | "settings" | null;
   let dialog = $state<Dialog>(null);
 
-  onMount(() => kahui.init());
+  // A rejected promise here used to leave the window sitting on "Starting your
+  // node…" forever, which says nothing to anybody. Whatever went wrong, say it.
+  onMount(() => {
+    kahui.init().catch((err) => {
+      kahui.phase = "failed";
+      kahui.fatal = `The window could not reach the node: ${errorText(err)}`;
+    });
+  });
+
+  // The window title says where you are, the way a chat application's should.
+  // It doubles as the one piece of state observable from outside the window,
+  // which is how the app can be checked without looking at pixels.
+  $effect(() => {
+    const title =
+      kahui.phase === "starting"
+        ? "Kahui - starting"
+        : kahui.phase === "failed"
+          ? "Kahui - could not start"
+          : kahui.fresh
+            ? "Kahui - set up"
+            : kahui.channel && kahui.community
+              ? `#${kahui.channel.name} - ${kahui.community.name} - Kahui`
+              : "Kahui";
+    document.title = title;
+    // The native window title is set separately, from Rust; the webview's own
+    // title never reaches it.
+    void api.setWindowTitle(title).catch(() => {});
+  });
 
   // Clear a notice a few seconds after it appears, so warnings do not pile up.
   $effect(() => {
@@ -27,12 +56,26 @@
   <div class="curtain">
     <div class="cluster"></div>
     <p class="muted">Starting your node…</p>
+    <!-- Say what is happening rather than spinning silently. Opening the
+         database and binding sockets takes a moment; anything beyond a few
+         seconds is worth remarking on. -->
+    {#if kahui.startupNote}
+      <p class="reason">{kahui.startupNote}</p>
+    {:else if kahui.waiting >= 8}
+      <p class="reason">
+        This is taking longer than usual. If another copy of Kāhui is open, or the command
+        line client is running, close it — they share one identity and only one can hold it
+        at a time.
+      </p>
+    {/if}
   </div>
 {:else if kahui.phase === "failed"}
   <div class="curtain">
     <h1>Kāhui could not start</h1>
     <p class="reason">{kahui.fatal}</p>
   </div>
+{:else if kahui.fresh}
+  <Welcome />
 {:else}
   <main>
     <CommunityRail onadd={() => (dialog = "add")} />

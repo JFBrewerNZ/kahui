@@ -108,9 +108,28 @@ const status: Status = {
 
 const wait = <T>(value: T) => new Promise<T>((r) => setTimeout(() => r(value), 60));
 
+/// `?welcome` on the preview URL shows the first-run screen, which is otherwise
+/// only reachable by deleting your data directory.
+const asNewDevice =
+  typeof location !== "undefined" && location.search.includes("welcome");
+
+/// On a genuinely new device the name is the generated placeholder, and there
+/// are no communities. Both have to come from the same place or the preview
+/// contradicts itself.
+const previewStatus = (): Status =>
+  asNewDevice ? { ...status, display_name: "kahui-84a3b435" } : status;
+
 export const mockApi = {
-  status: () => wait(status),
-  communities: () => wait(communities),
+  startupState: () =>
+    wait({ phase: "ready" as const, status: previewStatus(), dataDir: mockDataDir }),
+  setWindowTitle: async (title: string) => {
+    document.title = title;
+  },
+  backupPhrase: () =>
+    wait("kahuikey1" + "5dGEESzrHgRfzERhNR9JUEsuRGagNtd8vNkGu51LK685"),
+  restoreIdentity: async (_phrase: string) => {},
+  status: () => wait(previewStatus()),
+  communities: () => wait(asNewDevice ? [] : communities),
   channels: (community: Id) => wait(community === AOTEAROA ? channels : [channels[0]]),
   members: (community: Id) => wait(community === AOTEAROA ? members : [members[2]]),
   onlineMembers: (_community: Id) => wait([ALICE, BOB]),
@@ -132,10 +151,11 @@ export const mockApi = {
   dial: async (_addr: string) => {},
 };
 
-export const mockReady: Ready = {
-  status,
-  dataDir: "C:\\Users\\you\\AppData\\Local\\Kahui\\Kahui\\data",
-};
+const mockDataDir = "C:\Users\you\AppData\Local\Kahui\Kahui\data";
+
+/// A function, not a constant: it has to agree with `previewStatus`, which
+/// depends on the URL and so cannot be decided at module load.
+export const mockReady = (): Ready => ({ status: previewStatus(), dataDir: mockDataDir });
 
 /** No events arrive in preview; the interface is static by design here. */
 export const mockListen = (_handler: (event: NodeEvent) => void) =>

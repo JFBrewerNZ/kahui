@@ -12,6 +12,17 @@
   let working = $state(false);
   let problem = $state("");
   let syncNote = $state("");
+  let key = $state("");
+  let keyShown = $state(false);
+
+  async function revealKey() {
+    try {
+      key = await kahui.backupPhrase();
+      keyShown = true;
+    } catch (err) {
+      problem = errorText(err);
+    }
+  }
 
   const changed = $derived(name.trim() !== (kahui.status?.display_name ?? "") && !!name.trim());
 
@@ -90,6 +101,27 @@
     </dd>
   </dl>
 
+  <!-- The one piece of genuinely unrecoverable state. Worth a section rather
+       than a line, and worth hiding until asked for. -->
+  <section class="key">
+    <h3>Your key</h3>
+    {#if keyShown}
+      <textarea class="field code mono" readonly rows="2" value={key} onclick={(e) => e.currentTarget.select()}
+      ></textarea>
+      <p class="warn">
+        Anyone holding this can post as you, in every community, forever. There is no
+        server to revoke it at. Keep it somewhere only you can reach.
+      </p>
+    {:else}
+      <p class="faint keyhint">
+        Your identity is a key on this machine, not an account. Back it up and you can be
+        the same person on another device, or come back after losing this one. Lose it with
+        no copy and that identity is gone — nobody can reissue it.
+      </p>
+      <button class="btn" onclick={revealKey}>Show my key</button>
+    {/if}
+  </section>
+
   {#if problem}<p class="problem">{problem}</p>{/if}
 
   <div class="actions">
@@ -152,6 +184,38 @@
   .explain {
     margin-top: 0.15rem;
     line-height: 1.45;
+  }
+
+  .key {
+    margin-top: 1.2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--line);
+  }
+  .key h3 {
+    margin: 0 0 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .keyhint {
+    font-size: 0.82rem;
+    line-height: 1.55;
+    margin: 0 0 0.7rem;
+  }
+  .code {
+    resize: none;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    word-break: break-all;
+    color: var(--star);
+  }
+  .warn {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--danger);
+    margin: 0.6rem 0 0;
   }
 
   .problem {
