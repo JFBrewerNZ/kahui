@@ -1,0 +1,30 @@
+[package]
+name = "kahui-cli"
+description = "Kahui command line client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kahui"
+path = "src/main.rs"
+
+[dependencies]
+kahui-proto.workspace = true
+kahui-store.workspace = true
+kahui-net.workspace = true
+kahui-node.workspace = true
+libp2p.workspace = true
+tokio.workspace = true
+futures.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hex.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "kahui-net"
+description = "Kahui peer-to-peer transport: libp2p gossip, peer exchange and the frontier sync protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kahui-proto.workspace = true
+libp2p.workspace = true
+serde.workspace = true
+postcard.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures.workspace = true
+bs58.workspace = true
+tokio.workspace = true

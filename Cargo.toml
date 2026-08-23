@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kahui-proto",
+    "crates/kahui-store",
+    "crates/kahui-net",
+    "crates/kahui-node",
+    "crates/kahui-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+# AGPL, deliberately. Kahui exists so that communities are not captured by
+# whoever hosts them; the network clause (section 13) is what stops someone
+# doing exactly that with this code. Anyone running a modified Kahui as a
+# service must publish their source.
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/JFBrewerNZ/kahui"
+authors = ["The Kahui Contributors"]
+
+[workspace.dependencies]
+kahui-proto = { path = "crates/kahui-proto", version = "0.1.0" }
+kahui-store = { path = "crates/kahui-store", version = "0.1.0" }
+kahui-net   = { path = "crates/kahui-net",   version = "0.1.0" }
+kahui-node  = { path = "crates/kahui-node",  version = "0.1.0" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", features = ["use-std"] }
+thiserror = "2"
+anyhow = "1"
+blake3 = "1"
+ed25519-dalek = "2"
+rand = "0.8"
+hex = "0.4"
+bs58 = "0.5"
+redb = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-std", "io-util", "signal"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+directories = "5"
+libp2p = { version = "0.56", features = [
+    "tokio", "gossipsub", "mdns", "identify", "request-response", "cbor",
+    "noise", "yamux", "tcp", "quic", "macros", "ed25519", "ping",
+] }
+
+[profile.release]
+opt-level = 2

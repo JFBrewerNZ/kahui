@@ -1,0 +1,16 @@
+# Normalise to LF in the repository and on checkout, on every platform.
+#
+# Without this, Git on Windows checks files out with CRLF. That is harmless for
+# Rust, but a shell script with CRLF line endings fails on Linux with a baffling
+# "bad interpreter: /usr/bin/env bash^M" -- and this project is meant to run on
+# Linux servers as readily as on a desktop.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.rs   text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+
+# Cargo.lock is checked in: this workspace produces a binary, and contributors
+# and CI should build the exact same dependency versions.
+Cargo.lock text eol=lf merge=binary

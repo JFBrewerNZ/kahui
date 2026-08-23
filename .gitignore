@@ -1,0 +1,5 @@
+/target
+**/*.rs.bk
+/.kahui-demo
+*.redb
+.DS_Store

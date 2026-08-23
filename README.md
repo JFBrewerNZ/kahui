@@ -1,0 +1,263 @@
+# Kāhui
+
+**An open-source, decentralised alternative to Discord where communities are hosted by their members, not by a company.**
+
+When you join a Kāhui server, your device becomes part of that community's network.
+Members collectively store message history, share data, and keep the server alive.
+There is no central database, no login server, and no company-controlled infrastructure
+holding everyone's conversations.
+
+If the Kāhui project, its website, and its developers disappeared tomorrow, existing
+communities would keep running.
+
+> **Status: milestone 1 — CLI prototype.** The protocol, storage, networking and node
+> engine are real and tested. There is no GUI yet, and no voice, roles or moderation.
+> See [What is not built yet](#what-is-not-built-yet).
+
+---
+
+## Try it
+
+Everything below runs on one machine. Nothing contacts the internet.
+
+```bash
+# Prove the whole milestone in one go: three nodes, three databases, real sockets.
+bash scripts/demo.sh
+```
+
+The script founds a community on node A, joins B and C to it from A's invite, has all
+three exchange messages, **shuts A down** while B and C keep talking, then **restarts A**
+and shows it catching up on what it missed. It fails loudly if any of that does not
+happen.
+
+To do it by hand, in three terminals:
+
+```bash
+cargo build --release
+
+# Terminal 1 — Alice founds a community and prints an invite
+./target/release/kahui --data-dir ./alice --name alice --port 4001
+> /create Aotearoa
+invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o4Q9nSATPx7q…
+
+# Terminal 2 — Bob joins with that invite
+./target/release/kahui --data-dir ./bob --name bob --port 4002
+> /join kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o4Q9nSATPx7q…
+> kia ora
+
+# Terminal 3 — Carol does the same
+./target/release/kahui --data-dir ./carol --name carol --port 4003
+> /join kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o4Q9nSATPx7q…
+```
+
+Now close Alice's terminal. Bob and Carol keep talking. Start Alice again with the same
+`--data-dir` and she catches up.
+
+Type `/help` at the prompt for the full command list.
+
+---
+
+## What this actually is
+
+A community is an **append-only log of signed events**, replicated in full to every
+member. Creating a channel, joining, posting a message — each is one event, signed by
+its author with a key that never leaves their machine.
+
+That single decision is what removes the server. Because every event proves its own
+authorship, a node can accept history from *any* peer without trusting that peer. There
+is nothing left for a central authority to do:
+
+| Job a Discord server does | How Kāhui does it instead |
+|---|---|
+| Stores message history | Every member stores all of it |
+| Says who you are | Your keypair does; there is no account |
+| Decides message order | A Lamport clock every node computes identically |
+| Says what is authentic | The author's signature on each event |
+| Relays messages | Members gossip directly to each other |
+| Serves history to newcomers | Any member who has it |
+
+### How a node catches up
+
+Each member keeps a hash-chained log per community, numbered from zero. So "everything I
+have from Alice" is a single number, and a node's whole state is one number per member —
+a *frontier*.
+
+Catching up is one round trip: send your frontier, receive what it does not cover. The
+request is a few dozen bytes per member no matter how much history exists, so it costs
+the same after five minutes offline as after five months.
+
+### Why the founder is not special
+
+New members initially know only whoever invited them. Every member periodically announces
+its addresses to the community, and announces immediately when someone new subscribes, so
+within a second or two everyone has a direct path to everyone else.
+
+By the time the founder disconnects, nobody is routing through them. The demo asserts
+this — it checks B and C are directly linked *before* it kills A, because otherwise
+"the community survives" would be luck rather than design.
+
+### What ordering does and does not promise
+
+Messages you wrote after seeing someone else's always sort after theirs, on every node.
+Messages written concurrently are tied, and the tie is broken by event id — identical on
+every node, but unrelated to who pressed enter first.
+
+There is no way to do better without a clock someone has to be trusted to keep, which is
+the thing we are trying not to need.
+
+---
+
+## The stack, and why
+
+**Rust** for the whole thing. It is the only language where the same protocol core can be
+compiled into a native desktop app, a WebAssembly web client, and a mobile library behind
+an FFI shim — which is exactly what "one network, many clients" requires.
+
+| Layer | Choice | Why |
+|---|---|---|
+| Networking | [rust-libp2p](https://github.com/libp2p/rust-libp2p) 0.56 | Gossipsub, NAT traversal, QUIC and TCP, no default dependency on anybody's servers |
+| Storage | [redb](https://github.com/cberner/redb) 2.x | Embedded, ACID, pure Rust — so a node is one static binary, and cross-compiling to mobile is uneventful |
+| Signatures | Ed25519 (`ed25519-dalek`) | Small keys, fast verification, and the same key doubles as the libp2p transport identity |
+| Hashing | BLAKE3 | Fast, 32-byte content addresses |
+| Encoding | [postcard](https://github.com/jamesmunns/postcard) | Canonical by construction: no field names, no map ordering, so every node derives byte-identical signing input |
+
+**[iroh](https://www.iroh.computer/) was the main alternative** and is genuinely better at
+NAT traversal (~95% vs libp2p's ~70%). It was set aside because its reliability comes
+partly from relay servers operated by a company. They are self-hostable, but a project
+whose pitch is "no company-controlled infrastructure" should not ship pointing at any by
+default. This is worth revisiting: a libp2p transport backed by iroh
+([libp2p-iroh](https://github.com/rustonbsd/libp2p-iroh)) could give us both.
+
+---
+
+## How it is put together
+
+Five crates, layered so that the parts a web or mobile client cannot reuse are the *only*
+parts it has to replace.
+
+```
+kahui-cli      the terminal client — one consumer of the node API
+kahui-node     the engine: commands in, events out. What every client drives.
+kahui-net      libp2p: gossip, presence, the sync protocol
+kahui-store    a storage trait, plus an embedded redb implementation
+kahui-proto    identities, signed events, canonical encoding — no IO at all
+```
+
+Each layer only knows about the ones below it.
+
+- **`kahui-proto`** has no IO, no async, no networking — just pure functions over plain
+  data. A browser client compiled to WebAssembly shares this crate byte for byte, which
+  is what makes it the same network rather than a lookalike.
+- **`kahui-store`** is a trait because the storage engine is the part that genuinely
+  cannot be shared. Desktop uses redb; a web client will implement the same trait over
+  IndexedDB, and nothing above it changes.
+- **`kahui-node`** exposes `NodeHandle` — a clonable, thread-safe handle with async
+  methods and an event stream. A Tauri app, a mobile FFI shim and this CLI would all
+  drive exactly this.
+
+The CLI is deliberately thin: it renders events and forwards commands. Nothing about the
+protocol is encoded in it.
+
+See [`docs/architecture.md`](docs/architecture.md) for the event format, the sync
+protocol, and the reasoning behind each choice.
+
+---
+
+## Testing
+
+```bash
+cargo test --workspace     # 71 tests
+bash scripts/demo.sh       # the milestone, live, in three processes
+```
+
+The interesting tests are:
+
+- **`crates/kahui-store/tests/store.rs`** — replication logic with the network removed.
+  Handing a delta between two `Replica`s is exactly what sync does over the wire, so
+  convergence, equivocation detection and forged-signature rejection are all provable in
+  milliseconds without opening a socket.
+- **`crates/kahui-node/tests/three_nodes.rs`** — the milestone over real sockets, mDNS
+  off so that discovery must work the way it would on a real network.
+
+---
+
+## What is not built yet
+
+Honestly, so the roadmap is not mistaken for the present tense:
+
+- **No GUI.** Milestone 1 is deliberately headless.
+- **No roles, permissions or moderation.** Communities are open; the invite is a social
+  gate, not a cryptographic one. The event model has room for capability-based
+  permissions, but none are enforced.
+- **No voice.**
+- **No NAT traversal beyond what libp2p does unaided.** Relay and hole punching
+  (`libp2p-relay`, DCUtR) are not wired up, so nodes behind strict NATs will not connect
+  across the internet yet. On a LAN, or between machines with reachable addresses, it
+  works today.
+- **No DHT.** Members find each other from an invite plus presence announcements. This is
+  fine for a community; it will not scale to finding arbitrary peers on the open internet
+  without adding Kademlia.
+- **No deletion or history trimming.** Every node keeps everything forever. Real
+  communities will need message deletion and history horizons.
+- **Equivocation is detected, not punished.** A node that signs two events at the same
+  sequence is rejected, but there is no protocol for telling everyone else about it.
+- **`postcard` is Rust-specific.** Fine while every implementation is Rust; a
+  language-neutral canonical encoding (DAG-CBOR) is the obvious replacement, and the
+  encoding is isolated in one module so that swap is contained.
+
+---
+
+## Notes for running elsewhere
+
+**Linux (including a DigitalOcean droplet):** identical commands. Open the port you pass
+to `--port` on both TCP and UDP. `--no-mdns` is worth setting on a cloud VM, where local
+discovery finds nothing but still chatters.
+
+**Windows + Git Bash:** two things bite, and `scripts/demo.sh` handles both.
+
+- Git Bash rewrites arguments that look like Unix paths, turning `/create` into
+  `C:/Program Files/Git/create`. Set `MSYS_NO_PATHCONV=1`. (The CLI detects this and says
+  so, rather than posting the mangled path as a chat message.)
+- `kahui.exe` is a native Windows binary, so a Unix-style path like `/c/Users/...` is read
+  as *root of the current drive* and silently resolves somewhere else. Use a Windows path
+  or `cygpath -w`.
+
+---
+
+## Licence
+
+**GNU Affero General Public License, version 3 or later** ([LICENSE](LICENSE)).
+
+Kāhui exists so that a community is not captured by whoever happens to host it. The AGPL
+is the same idea applied to the code. Its section 13 is the part that matters: **if you
+run a modified Kāhui as a network service, you must offer its source to the people using
+it.** The ordinary GPL lets a company take a project, improve it privately and run it as
+a service without giving anything back. The AGPL closes that.
+
+What it does and does not do, plainly:
+
+- ✅ Anyone may use, study, modify and share it, including a community running its own
+  fork.
+- ✅ Any modified version anyone runs for others must be published, so a proprietary
+  fork of Kāhui cannot exist.
+- ✅ Clients for other platforms must also be AGPL — there is no proprietary Kāhui app.
+- ⚠️ It does **not** forbid charging money. Nothing open source can: the Open Source
+  Definition explicitly bars discriminating against commercial use, so a licence can be
+  open source or it can ban commercial gain, not both. What the AGPL does instead is
+  remove the *point* of commercial capture — anyone charging to host Kāhui must hand
+  every user the complete source, which anyone else can then run for free.
+
+That is a deliberate trade. A genuine non-commercial licence (PolyForm Noncommercial, say)
+would have cost the project the ability to call itself open source, kept it out of Linux
+distributions, deterred contributors, and — awkwardly — forbidden a community co-op from
+charging its own members to cover server costs.
+
+If you want stronger than this, the usual route is to keep copyright and sell commercial
+exceptions alongside the AGPL. That needs a contributor licence agreement, which is
+friction on outside contributions, so it is worth deciding before the project has any.
+
+### Contributing
+
+By contributing you agree your work is licensed under AGPL-3.0-or-later. Every dependency
+in the tree is permissively licensed (MIT, Apache-2.0, BSD, MPL-2.0, Zlib) and therefore
+compatible; please keep it that way, and check any new dependency before adding it.

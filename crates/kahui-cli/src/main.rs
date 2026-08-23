@@ -1,0 +1,171 @@
+//! `kahui` — the command line client.
+//!
+//! A thin shell over [`kahui_node`]. Everything it does goes through
+//! [`kahui_node::NodeHandle`], the same interface a desktop, web or mobile
+//! client would use, so nothing about the protocol is encoded in this binary.
+//!
+//! It runs a node and gives you a prompt. There is no daemon to install and no
+//! service to point it at: the process you start *is* your share of the
+//! communities you belong to, and closing it takes that share offline until you
+//! start it again.
+
+mod session;
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
+use kahui_node::{NetConfig, Node, NodeConfig};
+use libp2p::Multiaddr;
+use tracing_subscriber::EnvFilter;
+
+/// Directory used when neither `--data-dir` nor `KAHUI_DATA_DIR` is set.
+fn default_data_dir() -> PathBuf {
+    directories::ProjectDirs::from("nz", "Kahui", "Kahui")
+        .map(|dirs| dirs.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(".kahui"))
+}
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "kahui",
+    version,
+    about = "Kahui — an open source, decentralised alternative to Discord",
+    long_about = "Kahui communities are hosted by their members. Running this \
+program makes your machine part of every community you have joined: it stores \
+the history, serves it to other members, and keeps working when any of them \
+go offline. There is no server to sign in to.\n\nFree software under the GNU \
+Affero General Public License, version 3 or later. If you run a modified \
+version of this program for others to use, you must offer them its source."
+)]
+struct Cli {
+    /// Where this node keeps its key and its copy of history.
+    ///
+    /// One directory per node. Point two invocations at two directories to run
+    /// two independent members on one machine.
+    #[arg(long, env = "KAHUI_DATA_DIR", global = true)]
+    data_dir: Option<PathBuf>,
+
+    /// Display name shown to other members.
+    #[arg(long, env = "KAHUI_NAME", global = true)]
+    name: Option<String>,
+
+    /// Port to listen on. Zero lets the operating system choose.
+    ///
+    /// A fixed port makes a node easier for peers to find again after a
+    /// restart, and is worth setting on a machine that others dial into.
+    #[arg(long, default_value_t = 0, global = true)]
+    port: u16,
+
+    /// Turn off local network discovery.
+    #[arg(long, global = true)]
+    no_mdns: bool,
+
+    /// Dial this multiaddress at startup. May be repeated.
+    #[arg(long = "connect", value_name = "MULTIADDR", global = true)]
+    connect: Vec<String>,
+
+    /// Emit newline-delimited JSON instead of prose, for scripting.
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Run a session command at startup, before reading input. May be repeated.
+    ///
+    /// Anything valid at the prompt works here, which is how the demo script
+    /// drives nodes without a human at the keyboard.
+    #[arg(long = "exec", value_name = "COMMAND", global = true)]
+    exec: Vec<String>,
+
+    /// Exit after this many seconds. Without it, the node runs until you quit.
+    #[arg(long = "for", value_name = "SECONDS", global = true)]
+    run_for: Option<u64>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Start the node and open a session. This is the default.
+    Run,
+    /// Print this node's identity and exit.
+    Id,
+}
+
+impl Cli {
+    fn data_dir(&self) -> PathBuf {
+        self.data_dir.clone().unwrap_or_else(default_data_dir)
+    }
+
+    fn net_config(&self) -> Result<NetConfig> {
+        // Listening on both transports costs nothing and means a peer blocked
+        // from one still has a way in.
+        let listen = vec![
+            format!("/ip4/0.0.0.0/tcp/{}", self.port)
+                .parse::<Multiaddr>()
+                .context("building the TCP listen address")?,
+            format!("/ip4/0.0.0.0/udp/{}/quic-v1", self.port)
+                .parse::<Multiaddr>()
+                .context("building the QUIC listen address")?,
+        ];
+        Ok(NetConfig {
+            listen,
+            enable_mdns: !self.no_mdns,
+            ..NetConfig::default()
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Quiet by default; `RUST_LOG=kahui_node=debug` turns the machinery on.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
+    let data_dir = cli.data_dir();
+    let config = NodeConfig {
+        data_dir: data_dir.clone(),
+        display_name: cli.name.clone(),
+        net: cli.net_config()?,
+        bootstrap: cli.connect.clone(),
+        ..NodeConfig::default()
+    };
+
+    let node = Node::spawn(config)
+        .await
+        .with_context(|| format!("starting a node in {}", data_dir.display()))?;
+
+    match cli.command {
+        Some(Command::Id) => {
+            if cli.json {
+                let status = node.status().await?;
+                println!("{}", serde_json::to_string(&status)?);
+            } else {
+                println!("user id : {}", node.user());
+                println!("peer id : {}", node.peer_id());
+                println!("data dir: {}", data_dir.display());
+            }
+            node.shutdown().await.ok();
+            Ok(())
+        }
+        Some(Command::Run) | None => {
+            session::run(
+                node,
+                session::Options {
+                    json: cli.json,
+                    startup_commands: cli.exec.clone(),
+                    run_for: cli.run_for.map(Duration::from_secs),
+                    data_dir,
+                },
+            )
+            .await
+        }
+    }
+}
