@@ -43,6 +43,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
+            native: true
 
           # Statically linked against musl, so one binary runs on any Linux
           # distribution regardless of its glibc version.
@@ -50,6 +51,7 @@ jobs:
             os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             archive: tar
+            native: true
 
           # Kept alongside the static build as a fallback, in case anything ever
           # needs the system allocator or glibc's resolver.
@@ -57,16 +59,22 @@ jobs:
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             archive: tar
+            native: true
 
           - label: macOS (Apple Silicon)
             os: macos-latest
             target: aarch64-apple-darwin
             archive: tar
+            native: true
 
+          # Cross-compiled from the Apple Silicon runner, which ships both SDKs.
+          # The dedicated Intel runner image is being retired and its queue is
+          # long enough to hold up a release.
           - label: macOS (Intel)
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
             archive: tar
+            native: false
 
     steps:
       - uses: actions/checkout@v4
@@ -104,9 +112,10 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }} -p kahui-cli
 
       - name: Check it runs
-        # Cross-built targets cannot be executed here; the native ones can, and
-        # a binary that will not start is worth catching before it is published.
-        if: matrix.target != 'x86_64-unknown-linux-musl' || runner.arch == 'X64'
+        # Only where the binary matches the runner's architecture. A binary that
+        # will not start is worth catching before it is published; a
+        # cross-compiled one simply cannot be tried here.
+        if: matrix.native
         run: ./target/${{ matrix.target }}/release/kahui --version
 
       - name: Package
