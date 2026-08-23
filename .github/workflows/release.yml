@@ -149,9 +149,87 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  desktop:
+    name: Desktop — ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows
+            os: windows-latest
+            args: ""
+          # Built on the oldest supported image so the .deb and AppImage work on
+          # more than just the newest distributions.
+          - label: Linux
+            os: ubuntu-22.04
+            args: ""
+          - label: macOS (Apple Silicon)
+            os: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - label: macOS (Intel)
+            os: macos-latest
+            args: "--target x86_64-apple-darwin"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Webview toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: desktop-release-${{ matrix.label }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: desktop-release-${{ matrix.label }}-
+
+      - run: npm ci
+        working-directory: desktop
+
+      - name: Bundle
+        run: npm run tauri build -- ${{ matrix.args }}
+        working-directory: desktop
+
+      # Tauri writes installers under target/release/bundle (or under the target
+      # triple when cross-compiling). Collect whatever it produced.
+      - name: Collect installers
+        id: collect
+        run: |
+          mkdir -p desktop-dist
+          find target -path '*/release/bundle/*' -type f             \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.dmg'                -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' \)             -exec cp {} desktop-dist/ \;
+          ls -la desktop-dist
+          test -n "$(ls -A desktop-dist)" || { echo "no installers were produced"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kahui-desktop-${{ matrix.label }}
+          path: desktop-dist/*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -188,9 +266,21 @@ jobs:
           are hosted by their members. Running this binary makes your machine part of every
           community you have joined. There is nothing to sign up for.
 
-          ## Install
+          ## Install the app
 
-          Download the file for your platform below, unpack it, and run \`kahui\`.
+          Most people want this one. Download the installer for your platform,
+          run it, and you get a window.
+
+          | Platform | File |
+          |---|---|
+          | Windows | \`.msi\` or \`-setup.exe\` |
+          | macOS | \`.dmg\` (pick Apple Silicon or Intel) |
+          | Linux | \`.AppImage\` (runs anywhere) or \`.deb\` |
+
+          ## Or the command line client
+
+          A single binary with no window, for servers and for scripting. Unpack
+          and run \`kahui\`.
 
           | Platform | File |
           |---|---|

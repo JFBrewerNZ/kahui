@@ -154,6 +154,10 @@ pub(crate) enum Command {
         community: CommunityId,
         reply: Reply<Vec<MemberSummary>>,
     },
+    OnlineMembers {
+        community: CommunityId,
+        reply: Reply<Vec<UserId>>,
+    },
     History {
         community: CommunityId,
         channel: ChannelId,
@@ -337,6 +341,20 @@ impl NodeHandle {
     pub async fn members(&self, community: CommunityId) -> Result<Vec<MemberSummary>, NodeError> {
         self.call(
             |reply| Command::Members { community, reply },
+            DEFAULT_COMMAND_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Which members this node currently has a connection to.
+    ///
+    /// Presence in Kāhui is first-hand only: there is no server keeping a
+    /// roster, so a node can report who *it* can reach and nothing more.
+    /// A member missing from this list may well be online and talking to
+    /// somebody else.
+    pub async fn online_members(&self, community: CommunityId) -> Result<Vec<UserId>, NodeError> {
+        self.call(
+            |reply| Command::OnlineMembers { community, reply },
             DEFAULT_COMMAND_TIMEOUT,
         )
         .await

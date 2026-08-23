@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    The app icon: the same star cluster as the mark, on a dark ground so it
+    reads on a light taskbar as well as a dark one.
+  -->
+  <rect width="512" height="512" rx="112" fill="#0e1524"/>
+  <g transform="translate(80 80) scale(5.5)" >
+    <g stroke="#8ba2cc" stroke-width="2.1" stroke-linecap="round" opacity="0.55" fill="none">
+      <path d="M14 20 L31 11"/><path d="M31 11 L48 21"/><path d="M14 20 L21 37"/>
+      <path d="M21 37 L40 37"/><path d="M40 37 L48 21"/><path d="M40 37 L53 47"/>
+      <path d="M21 37 L28 53"/><path d="M28 53 L40 37"/>
+    </g>
+    <g fill="#f4c65a">
+      <circle cx="31" cy="11" r="5.4"/><circle cx="40" cy="37" r="5.8"/>
+      <circle cx="21" cy="37" r="4.8"/><circle cx="14" cy="20" r="4.4"/>
+      <circle cx="28" cy="53" r="4.4"/><circle cx="48" cy="21" r="4"/>
+      <circle cx="53" cy="47" r="3.8"/>
+    </g>
+  </g>
+</svg>

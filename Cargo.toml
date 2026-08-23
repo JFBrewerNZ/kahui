@@ -6,6 +6,18 @@ members = [
     "crates/kahui-net",
     "crates/kahui-node",
     "crates/kahui-cli",
+    "desktop/src-tauri",
+]
+
+# The desktop app needs a webview toolchain to build, which a headless Linux box
+# does not have by default. Keeping it out of the default set means `cargo test`
+# stays a one-liner everywhere; CI builds it in a job of its own.
+default-members = [
+    "crates/kahui-proto",
+    "crates/kahui-store",
+    "crates/kahui-net",
+    "crates/kahui-node",
+    "crates/kahui-cli",
 ]
 
 [workspace.package]

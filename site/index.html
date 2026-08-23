@@ -180,9 +180,9 @@
 
 <div class="downloads" id="downloads">
   <a class="dl" data-os="win"   href="https://github.com/JFBrewerNZ/kahui/releases/latest">
-    <b>Windows</b><span>x86-64</span></a>
+    <b>Windows</b><span>installer</span></a>
   <a class="dl" data-os="linux" href="https://github.com/JFBrewerNZ/kahui/releases/latest">
-    <b>Linux</b><span>x86-64, static</span></a>
+    <b>Linux</b><span>AppImage</span></a>
   <a class="dl" data-os="mac"   href="https://github.com/JFBrewerNZ/kahui/releases/latest">
     <b>macOS</b><span>Apple Silicon</span></a>
   <a class="dl" data-os="macx"  href="https://github.com/JFBrewerNZ/kahui/releases/latest">
@@ -190,14 +190,18 @@
 </div>
 
 <p class="fineprint">
-  One file, no installer, no account. Windows and macOS will warn that it is unsigned —
-  the project has no code-signing certificate, because buying one would put a company
-  between you and the software. Checksums are published with every release.
+  No account, and nothing to sign up for. Windows and macOS will warn that the download is
+  unsigned — the project has no code-signing certificate, because buying one would put a
+  company between you and the software. Checksums are published with every release.
+  <br /><br />
+  Running a server, or prefer a terminal? Every release also ships a
+  <a href="https://github.com/JFBrewerNZ/kahui/releases/latest">single-binary command line
+  client</a> with no window at all.
 </p>
 
 <h2>Two minutes</h2>
 
-<pre><span class="c"># start it</span>
+<pre><span class="c"># the same thing, from the command line client</span>
 ./kahui
 
 <span class="p">&gt;</span> /create Aotearoa
@@ -237,10 +241,10 @@ invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
 <h2>Where it is up to</h2>
 
 <div class="note">
-  <b>Milestone 1: a working command-line client.</b> The protocol, storage, networking and
-  sync are real, tested, and do everything described above. There is no graphical client
-  yet, and no voice, roles or moderation. Nodes behind strict home routers cannot reach
-  each other across the internet yet — relay support is next. The
+  <b>Milestone 2: a working desktop app.</b> The protocol, storage, networking and sync are
+  real, tested, and do everything described above, and there is now a window as well as a
+  command line client. No voice, roles or moderation yet. Nodes behind strict home routers
+  cannot reach each other across the internet yet — relay support is next. The
   <a href="https://github.com/JFBrewerNZ/kahui/blob/main/docs/architecture.md">architecture
   notes</a> list every known limitation plainly, because a decentralised system that
   overstates its guarantees is worse than a centralised one that does not.
@@ -272,20 +276,23 @@ invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
     });
   }
 
-  // Turn each button into a direct download once we know the latest version.
-  var suffix = {
-    win:   'x86_64-pc-windows-msvc.zip',
-    linux: 'x86_64-unknown-linux-musl.tar.gz',
-    mac:   'aarch64-apple-darwin.tar.gz',
-    macx:  'x86_64-apple-darwin.tar.gz'
+  // Turn each button into a direct download once we know the latest release.
+  // Matched loosely, by extension and architecture hint, so that a change in
+  // how the installers are named degrades to the releases page rather than to a
+  // dead link.
+  var matches = {
+    win:   function (n) { return /\.msi$/i.test(n); },
+    linux: function (n) { return /\.AppImage$/i.test(n); },
+    mac:   function (n) { return /\.dmg$/i.test(n) && /aarch64|arm64/i.test(n); },
+    macx:  function (n) { return /\.dmg$/i.test(n) && /x64|x86_64|intel/i.test(n); }
   };
   fetch('https://api.github.com/repos/JFBrewerNZ/kahui/releases/latest')
     .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
     .then(function (release) {
       var assets = release.assets || [];
       links.forEach(function (a) {
-        var want = suffix[a.dataset.os];
-        var hit = assets.filter(function (x) { return x.name.endsWith(want); })[0];
+        var test = matches[a.dataset.os];
+        var hit = assets.filter(function (x) { return test(x.name); })[0];
         if (hit) a.href = hit.browser_download_url;
       });
     })

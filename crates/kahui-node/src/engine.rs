@@ -832,6 +832,10 @@ impl Engine {
                 let _ = reply.send(self.store.members(&community).map_err(NodeError::from));
             }
 
+            Command::OnlineMembers { community, reply } => {
+                let _ = reply.send(self.online_members(&community));
+            }
+
             Command::History {
                 community,
                 channel,
@@ -1014,6 +1018,22 @@ impl Engine {
         }
 
         Ok(Invite::new(community, summary.name, peers))
+    }
+
+    /// Members we currently hold a connection to.
+    ///
+    /// Membership is a routing table: a member's network identity follows from
+    /// the public key in their events, so this is a set intersection and needs
+    /// nobody to have announced anything.
+    fn online_members(&self, community: &CommunityId) -> Result<Vec<UserId>, NodeError> {
+        let connected: HashSet<PeerId> = self.swarm.connected_peers().copied().collect();
+        Ok(self
+            .store
+            .members(community)?
+            .into_iter()
+            .filter(|member| peer_id_of(&member.id).is_some_and(|peer| connected.contains(&peer)))
+            .map(|member| member.id)
+            .collect())
     }
 
     fn history(

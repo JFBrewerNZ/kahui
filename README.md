@@ -14,8 +14,9 @@ holding everyone's conversations.
 If the Kāhui project, its website, and its developers disappeared tomorrow, existing
 communities would keep running.
 
-> **Status: milestone 1 — CLI prototype.** The protocol, storage, networking and node
-> engine are real and tested. There is no GUI yet, and no voice, roles or moderation.
+> **Status: milestone 2 — desktop app.** The protocol, storage, networking and node
+> engine are real and tested, and there is now a graphical client alongside the command
+> line one. No voice, roles or moderation yet.
 > See [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -25,6 +26,16 @@ communities would keep running.
 [**Get the latest release →**](https://github.com/JFBrewerNZ/kahui/releases/latest) ·
 [project site](https://jfbrewernz.github.io/kahui/)
 
+**The app** — a window, for using Kāhui.
+
+| Platform | File |
+|---|---|
+| Windows | `.msi` or `-setup.exe` |
+| macOS | `.dmg` (Apple Silicon or Intel) |
+| Linux | `.AppImage` or `.deb` |
+
+**The command line client** — one binary, no window. For servers and for scripting.
+
 | Platform | File |
 |---|---|
 | Windows | `…-x86_64-pc-windows-msvc.zip` |
@@ -32,10 +43,13 @@ communities would keep running.
 | macOS (Apple Silicon) | `…-aarch64-apple-darwin.tar.gz` |
 | macOS (Intel) | `…-x86_64-apple-darwin.tar.gz` |
 
-One file, no installer, no account. Windows and macOS will warn that it is unsigned —
-there is no code-signing certificate, because buying one would put a company between you
-and the software. Every release ships `SHA256SUMS`, and every artifact is built from its
-tag by [a workflow you can read](.github/workflows/release.yml).
+No account either way. Windows and macOS will warn that the download is unsigned — there
+is no code-signing certificate, because buying one would put a company between you and
+the software. Every release ships `SHA256SUMS`, and every artifact is built from its tag
+by [a workflow you can read](.github/workflows/release.yml).
+
+Both clients share one data directory, so they are the same member of the same
+communities — which also means only one of them can run at a time.
 
 ---
 
@@ -155,16 +169,23 @@ default. This is worth revisiting: a libp2p transport backed by iroh
 
 ## How it is put together
 
-Five crates, layered so that the parts a web or mobile client cannot reuse are the *only*
-parts it has to replace.
+Layered so that the parts a web or mobile client cannot reuse are the *only* parts it has
+to replace.
 
 ```
-kahui-cli      the terminal client — one consumer of the node API
+desktop/       the app: a Svelte window over a Tauri shell
+kahui-cli      the terminal client
+               ^ two front ends, one node API, no protocol knowledge in either
 kahui-node     the engine: commands in, events out. What every client drives.
 kahui-net      libp2p: gossip, presence, the sync protocol
 kahui-store    a storage trait, plus an embedded redb implementation
 kahui-proto    identities, signed events, canonical encoding — no IO at all
 ```
+
+The desktop app runs a full node **in its own process**. There is no local server, no
+port to bind, and no second thing to install: the window talks to the node over Tauri's
+IPC, and every one of its commands is a one-line forward to `NodeHandle`. That the CLI
+and the app are interchangeable front ends is the test of whether the layering is real.
 
 Each layer only knows about the ones below it.
 
@@ -211,11 +232,10 @@ The interesting tests are:
 
 Honestly, so the roadmap is not mistaken for the present tense:
 
-- **No GUI.** Milestone 1 is deliberately headless.
+- **No voice, and no video.**
 - **No roles, permissions or moderation.** Communities are open; the invite is a social
   gate, not a cryptographic one. The event model has room for capability-based
   permissions, but none are enforced.
-- **No voice.**
 - **No NAT traversal beyond what libp2p does unaided.** Relay and hole punching
   (`libp2p-relay`, DCUtR) are not wired up, so nodes behind strict NATs will not connect
   across the internet yet. On a LAN, or between machines with reachable addresses, it

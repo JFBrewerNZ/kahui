@@ -41,7 +41,9 @@ jobs:
 
       - run: cargo fmt --all --check
 
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The desktop app is linted in its own job, where the webview toolchain
+      # it needs is installed.
+      - run: cargo clippy --workspace --all-targets --exclude kahui-desktop -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -67,10 +69,10 @@ jobs:
           key: test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: test-${{ runner.os }}-
 
-      - run: cargo test --workspace --all-targets
+      - run: cargo test --workspace --all-targets --exclude kahui-desktop
 
       - name: Doc tests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --doc --exclude kahui-desktop
 
   demo:
     name: Three-node demo
@@ -106,6 +108,57 @@ jobs:
             tail -100 "$log" || true
             echo "::endgroup::"
           done
+
+  desktop:
+    name: Desktop app (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # Tauri renders in the system webview, which on Linux has to be installed.
+      - name: Webview toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev             librsvg2-dev patchelf libxdo-dev
+
+      - name: Install toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy --no-self-update
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: desktop-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: desktop-${{ runner.os }}-
+
+      - run: npm ci
+        working-directory: desktop
+
+      # Type-checks the interface, and checks that every call it makes lines up
+      # with a real Tauri command. A mismatch there compiles on both sides and
+      # only fails in front of a user.
+      - run: npm run check
+        working-directory: desktop
+
+      - run: npm run build
+        working-directory: desktop
+
+      - run: cargo clippy -p kahui-desktop --all-targets -- -D warnings
 
   licences:
     name: Dependency licences
