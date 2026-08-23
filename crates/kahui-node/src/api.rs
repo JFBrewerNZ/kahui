@@ -55,6 +55,41 @@ pub struct Status {
     pub listen_addrs: Vec<String>,
     pub connected_peers: Vec<String>,
     pub communities: Vec<CommunityStatus>,
+    /// Whether anybody can dial us.
+    pub reachability: Reachability,
+    /// The member currently carrying our traffic, if we needed one.
+    pub relayed_by: Option<String>,
+    /// How many members we are carrying for. Nodes that can be reached pay this
+    /// forward to the ones that cannot.
+    pub relaying_for: usize,
+}
+
+/// Whether other people can open a connection to this node.
+///
+/// This is the difference between being a participant and being a spectator. A
+/// node nobody can dial can still read everything and post, but it cannot serve
+/// history to anyone — and serving history is the half of the bargain that
+/// keeps a community alive when its other members go offline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reachability {
+    /// Not yet established: peers have not answered enough probes.
+    Unknown,
+    /// Peers can dial us. We can serve history, and we can relay for others.
+    Direct,
+    /// A router stands in the way. We need a member who *is* reachable to carry
+    /// for us, until a hole punch gets us out from behind it.
+    BehindNat,
+}
+
+impl Reachability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reachability::Unknown => "unknown",
+            Reachability::Direct => "direct",
+            Reachability::BehindNat => "behind a router",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,6 +140,16 @@ pub enum NodeEvent {
         peer: String,
         community: CommunityId,
         applied: usize,
+    },
+    /// Our own reachability changed: a router appeared, a relay took us on, or
+    /// a hole punch got us out from behind one.
+    ReachabilityChanged {
+        reachability: Reachability,
+        relayed_by: Option<String>,
+    },
+    /// A relayed connection became a direct one. The relay is out of the path.
+    HolePunched {
+        peer: String,
     },
     /// Something went wrong that did not stop the node.
     Warning {

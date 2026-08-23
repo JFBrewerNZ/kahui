@@ -175,6 +175,41 @@ something that is not supposed to have one.
 
 ---
 
+## 5b. Reachability, without anybody's infrastructure
+
+Most people are behind a home router, and a node nobody can dial is a spectator: able to
+read and post, unable to serve history to anybody. A network of spectators does not work,
+because serving history is the half of the bargain that keeps a community alive when its
+other members go offline.
+
+Three protocols fix that, and none of them is a service:
+
+**AutoNAT** answers the one question a node genuinely cannot answer alone. Sending a packet
+proves nothing about whether anybody can send one back, so the node asks peers to dial it
+and believes what they find. Until then its reachability is `Unknown`, and an address a
+peer merely *observed* is treated as a claim rather than a fact.
+
+**Circuit relay** covers the case where the answer is no. A member who can be dialled
+carries traffic for one who cannot. Which members those are is not announced or
+configured: `identify` already reports the protocols a peer speaks, so a node behind a
+router simply notices that a peer offers relaying and asks. It holds two reservations
+rather than one, because the member carrying for you is a person who closes their laptop.
+
+**DCUtR** treats the relayed connection as a stepping stone rather than a destination. As
+soon as one exists, both ends use it to coordinate a simultaneous dial — a hole punch —
+and the relay drops out of the path. The relayed connection exists mainly to arrange its
+own replacement.
+
+The result is a community that reaches its own members using only its own members. One
+reachable node is enough for everybody else. There is no fallback to anybody else's relay
+infrastructure, which is deliberate: the moment there is a default relay, that relay is
+who the community depends on.
+
+A node can be told the answer instead of waiting for it — `--reachable direct` on a server
+with an open port, `--reachable nat` behind carrier-grade NAT where probing only wastes
+time — and `--lan` says that private addresses are the real addresses, which they are on
+a network with no internet behind it.
+
 ## 6. Storage
 
 One `Store` trait; one embedded redb implementation.
@@ -304,9 +339,17 @@ than a centralised one that does not.
 beginning each round — fine for thousands of events, not for millions. Presence is O(members).
 None of this is a problem at community scale; all of it needs work before it is a problem.
 
-**Reachability.** No relay, no hole punching, no DHT. Nodes behind strict NATs will not
-connect across the internet yet. Members find each other from an invite plus presence,
-which suits a community but will not find arbitrary peers on the open internet.
+**Reachability.** Relay and hole punching are built (§5b), so a community works as long as
+one of its members can be dialled. If literally every member is behind carrier-grade NAT
+there is nothing to relay through, and no fallback to anybody else's relay is provided on
+purpose. There is still no DHT: members find each other from an invite plus presence,
+which suits a community and will not find arbitrary peers on the open internet.
+
+**Off-grid.** The data model is delay-tolerant, and a message provably crosses a chain of
+members who were never online together. The transports for a genuinely disconnected mesh
+— Bluetooth in particular — are not built, and sync is still bolted to libp2p rather than
+expressed as the byte-pipe exchange it actually is. See
+[off-grid.md](off-grid.md).
 
 **Trust.** Communities are open — the invite is a social gate, not a cryptographic one.
 There are no roles or permissions. Equivocation is *detected* and rejected locally, but

@@ -1,17 +1,23 @@
 //! The libp2p behaviour stack a Kahui node runs.
 //!
-//! Four protocols, each doing one job:
-//!
 //! | protocol | job |
 //! |---|---|
 //! | `gossipsub` | fan new events out to everyone online, one topic per community |
 //! | `request-response` | direct sync, for catching up on what gossip missed |
-//! | `identify` | learn our own public address, and our peers' |
-//! | `mdns` | find members on the same LAN with no configuration at all |
+//! | `identify` | learn our own address, our peers' addresses, and what they speak |
+//! | `mdns` | find members on the same network with no configuration at all |
+//! | `autonat` | find out whether anybody can actually dial us |
+//! | `relay` (server) | carry traffic for members who cannot be dialled |
+//! | `relay` (client) | be carried, when we are one of them |
+//! | `dcutr` | escape the relay by hole punching to a direct connection |
 //!
-//! Nothing here is a server. Every node runs the identical stack and every node
-//! both serves and consumes history, which is why a community survives losing
-//! any particular member, including the one who created it.
+//! Nothing here is a server, and the last four are what keeps that true for
+//! people behind home routers. A node that *can* be reached offers to relay for
+//! the ones that cannot, so a community's reachability comes from its own
+//! members rather than from anybody's infrastructure. The relayed connection is
+//! then treated as a stepping stone rather than a destination: `dcutr` uses it
+//! to coordinate a hole punch, and the relay drops out of the path as soon as
+//! that succeeds.
 
 use std::time::Duration;
 
@@ -20,7 +26,7 @@ use libp2p::identity::Keypair;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{
-    gossipsub, identify, mdns, noise,
+    autonat, dcutr, gossipsub, identify, mdns, noise, relay,
     request_response::{self, ProtocolSupport},
     tcp, yamux, Multiaddr, StreamProtocol, Swarm, SwarmBuilder,
 };
@@ -45,11 +51,30 @@ const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
 pub struct NetConfig {
     /// Addresses to listen on. Port 0 asks the OS to choose.
     pub listen: Vec<Multiaddr>,
-    /// Announce and discover on the local network. Convenient on a LAN,
-    /// pointless on a cloud VM, and easy to turn off when testing without it.
+    /// Announce and discover on the local network.
+    ///
+    /// This is how neighbours find each other with no configuration, and the
+    /// only discovery mechanism that keeps working with no internet at all.
     pub enable_mdns: bool,
     /// Gossipsub heartbeat. Drives mesh maintenance and gossip fan-out.
     pub heartbeat: Duration,
+    /// Offer to carry traffic for members who cannot be dialled, and accept the
+    /// same offer when we are one of them.
+    ///
+    /// On by default. A community that cannot reach its own members has not
+    /// avoided depending on infrastructure; it has just failed.
+    pub enable_relay: bool,
+    /// Whether a private address counts as being reachable.
+    ///
+    /// On the internet `192.168.1.5` means nothing to anybody outside the
+    /// house, so the default is `false`: a node holding only private addresses
+    /// concludes it needs a relay, and goes looking for one.
+    ///
+    /// On an isolated network — a hall, a building, a neighbourhood mesh with
+    /// no internet at all — private addresses are the *only* addresses there
+    /// are, and a node holding one is perfectly reachable by its neighbours.
+    /// Setting this stops the node treating that as a problem to route around.
+    pub lan_reachable: bool,
 }
 
 impl Default for NetConfig {
@@ -65,6 +90,8 @@ impl Default for NetConfig {
             ],
             enable_mdns: true,
             heartbeat: Duration::from_secs(1),
+            enable_relay: true,
+            lan_reachable: false,
         }
     }
 }
@@ -75,10 +102,26 @@ pub struct Behaviour {
     pub sync: request_response::cbor::Behaviour<SyncRequest, SyncResponse>,
     pub identify: identify::Behaviour,
     pub mdns: Toggle<mdns::tokio::Behaviour>,
+    /// Tells us whether anybody can dial us. Every node answers these probes
+    /// for its peers as well as asking them, so the answer costs nothing but
+    /// participation.
+    pub autonat: Toggle<autonat::Behaviour>,
+    /// Carrying for others.
+    pub relay: Toggle<relay::Behaviour>,
+    /// Being carried.
+    pub relay_client: Toggle<relay::client::Behaviour>,
+    /// Turning a carried connection into a direct one.
+    pub dcutr: Toggle<dcutr::Behaviour>,
 }
 
 impl Behaviour {
-    fn new(key: &Keypair, config: &NetConfig) -> Result<Self, NetError> {
+    fn new(
+        key: &Keypair,
+        relay_client: relay::client::Behaviour,
+        config: &NetConfig,
+    ) -> Result<Self, NetError> {
+        let peer_id = key.public().to_peer_id();
+
         let gossipsub_config = gossipsub::ConfigBuilder::default()
             .heartbeat_interval(config.heartbeat)
             // Strict validation means gossipsub itself checks the sending
@@ -122,10 +165,53 @@ impl Behaviour {
         let mdns = if config.enable_mdns {
             Toggle::from(Some(mdns::tokio::Behaviour::new(
                 mdns::Config::default(),
-                key.public().to_peer_id(),
+                peer_id,
             )?))
         } else {
             Toggle::from(None)
+        };
+
+        let autonat = if config.enable_relay {
+            Toggle::from(Some(autonat::Behaviour::new(
+                peer_id,
+                autonat::Config {
+                    // On an isolated network the private addresses are the real
+                    // ones. Refusing to count them would have every node
+                    // concluding it is unreachable, when in fact they can all
+                    // reach each other perfectly well.
+                    only_global_ips: !config.lan_reachable,
+                    // Laptops move between networks, and reachability moves
+                    // with them, so ask again reasonably often.
+                    boot_delay: Duration::from_secs(4),
+                    refresh_interval: Duration::from_secs(60),
+                    retry_interval: Duration::from_secs(12),
+                    ..autonat::Config::default()
+                },
+            )))
+        } else {
+            Toggle::from(None)
+        };
+
+        let (relay, relay_client, dcutr) = if config.enable_relay {
+            (
+                Toggle::from(Some(relay::Behaviour::new(
+                    peer_id,
+                    relay::Config {
+                        // Enough to carry a community, bounded so that being a
+                        // good neighbour cannot be turned into being somebody
+                        // else's free infrastructure.
+                        max_reservations: 64,
+                        max_circuits: 32,
+                        max_circuit_duration: Duration::from_secs(30 * 60),
+                        max_circuit_bytes: 512 * 1024 * 1024,
+                        ..relay::Config::default()
+                    },
+                ))),
+                Toggle::from(Some(relay_client)),
+                Toggle::from(Some(dcutr::Behaviour::new(peer_id))),
+            )
+        } else {
+            (Toggle::from(None), Toggle::from(None), Toggle::from(None))
         };
 
         Ok(Behaviour {
@@ -133,6 +219,10 @@ impl Behaviour {
             sync,
             identify,
             mdns,
+            autonat,
+            relay,
+            relay_client,
+            dcutr,
         })
     }
 
@@ -179,8 +269,12 @@ pub fn build_swarm(identity: &Identity, config: &NetConfig) -> Result<Swarm<Beha
         )
         .map_err(|e| NetError::Build(Box::new(e)))?
         .with_quic()
-        .with_behaviour(|key| {
-            Behaviour::new(key, config)
+        // Adds a transport that can dial `/p2p-circuit` addresses, and hands
+        // back the client behaviour that drives it.
+        .with_relay_client(noise::Config::new, yamux::Config::default)
+        .map_err(|e| NetError::Build(Box::new(e)))?
+        .with_behaviour(|key, relay_client| {
+            Behaviour::new(key, relay_client, config)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         })
         .map_err(|e| NetError::Build(Box::new(e)))?
@@ -207,6 +301,15 @@ mod tests {
         assert!(rendered.iter().any(|a| a.contains("/quic-v1")));
     }
 
+    #[test]
+    fn relaying_is_on_by_default() {
+        let config = NetConfig::default();
+        assert!(config.enable_relay);
+        // ...but a private address is not assumed to be reachable, because on
+        // the internet it is not.
+        assert!(!config.lan_reachable);
+    }
+
     #[tokio::test]
     async fn a_swarm_builds_and_listens() {
         let identity = Identity::generate();
@@ -221,6 +324,15 @@ mod tests {
     async fn mdns_can_be_turned_off() {
         let config = NetConfig {
             enable_mdns: false,
+            ..NetConfig::default()
+        };
+        assert!(build_swarm(&Identity::generate(), &config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn relaying_can_be_turned_off() {
+        let config = NetConfig {
+            enable_relay: false,
             ..NetConfig::default()
         };
         assert!(build_swarm(&Identity::generate(), &config).is_ok());

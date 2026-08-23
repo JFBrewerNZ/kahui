@@ -14,9 +14,10 @@ holding everyone's conversations.
 If the Kāhui project, its website, and its developers disappeared tomorrow, existing
 communities would keep running.
 
-> **Status: milestone 2 — desktop app.** The protocol, storage, networking and node
-> engine are real and tested, and there is now a graphical client alongside the command
-> line one. No voice, roles or moderation yet.
+> **Status: milestone 3 — reachable from anywhere.** The protocol, storage, networking and
+> node engine are real and tested, there is a desktop app alongside the command line
+> client, and nodes behind home routers now reach each other by relaying through members
+> who are reachable. No voice, roles or moderation yet.
 > See [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -123,6 +124,23 @@ Catching up is one round trip: send your frontier, receive what it does not cove
 request is a few dozen bytes per member no matter how much history exists, so it costs
 the same after five minutes offline as after five months.
 
+### Anyone can run it, from anywhere
+
+Most people are behind a home router, which means nothing can dial them. A node in that
+position could still read and post, but it could not serve history to anybody — and
+serving history is the half of the bargain that keeps a community alive when other members
+go offline. A network of spectators is not a network.
+
+So members carry for each other. Each node asks its peers to dial it back (AutoNAT); if
+nobody can, it asks a member who *is* reachable to relay for it, and advertises the
+resulting address alongside its direct ones. The moment a relayed connection exists,
+[DCUtR](https://libp2p.io/docs/dcutr/) uses it to coordinate a hole punch, and the relay
+drops out of the path.
+
+The relay is a member of the community, not a service. Nothing is configured, nothing is
+hosted, and the node doing the carrying is running exactly the same binary as everyone
+else. One reachable member is enough for a community of people who are not.
+
 ### Why the founder is not special
 
 New members initially know only whoever invited them. Every member periodically announces
@@ -203,7 +221,8 @@ The CLI is deliberately thin: it renders events and forwards commands. Nothing a
 protocol is encoded in it.
 
 See [`docs/architecture.md`](docs/architecture.md) for the event format, the sync
-protocol, and the reasoning behind each choice.
+protocol, and the reasoning behind each choice, and
+[`docs/off-grid.md`](docs/off-grid.md) for what happens when there is no internet at all.
 
 ---
 
@@ -236,10 +255,14 @@ Honestly, so the roadmap is not mistaken for the present tense:
 - **No roles, permissions or moderation.** Communities are open; the invite is a social
   gate, not a cryptographic one. The event model has room for capability-based
   permissions, but none are enforced.
-- **No NAT traversal beyond what libp2p does unaided.** Relay and hole punching
-  (`libp2p-relay`, DCUtR) are not wired up, so nodes behind strict NATs will not connect
-  across the internet yet. On a LAN, or between machines with reachable addresses, it
-  works today.
+- **Reachability needs one reachable member.** Relay and hole punching are wired up, so a
+  community works as long as *somebody* in it can be dialled. A community where every
+  single member is behind carrier-grade NAT, with no reachable member at all, still
+  cannot form. There is no fallback to anybody else's relay infrastructure, deliberately.
+- **Bluetooth is not built.** See [running off-grid](docs/off-grid.md) for the honest
+  state of it: the protocol is already delay-tolerant and carries messages across nodes
+  that were never online together, but no Rust library does peer-to-peer BLE on Windows,
+  and Bluetooth properly belongs with the mobile client.
 - **No DHT.** Members find each other from an invite plus presence announcements. This is
   fine for a community; it will not scale to finding arbitrary peers on the open internet
   without adding Kademlia.

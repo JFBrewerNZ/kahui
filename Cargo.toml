@@ -58,6 +58,9 @@ directories = "5"
 libp2p = { version = "0.56", features = [
     "tokio", "gossipsub", "mdns", "identify", "request-response", "cbor",
     "noise", "yamux", "tcp", "quic", "macros", "ed25519", "ping",
+    # Reachability. Every node both offers relaying and can use it, so a
+    # community behind home routers needs no infrastructure of its own.
+    "relay", "dcutr", "autonat",
 ] }
 
 [profile.release]

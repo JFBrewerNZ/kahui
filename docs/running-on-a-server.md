@@ -8,21 +8,22 @@ chatting between my laptop and a machine on the other side of the world."
 Kāhui has no servers, but it does have a reachability problem, and the two are different
 things.
 
-Nodes behind a home router cannot yet accept incoming connections — relay support and
-hole punching are not built (see `architecture.md` §10). Outgoing connections work fine.
-So today:
+Nodes behind a home router cannot accept incoming connections. Since v0.3 that is no
+longer fatal: members who *can* be reached relay for the ones who cannot, and a hole punch
+usually takes over shortly after. So today:
 
 | Setup | Works? |
 |---|---|
 | Two machines on the same network | ✅ found automatically by mDNS |
 | Laptop → a machine with a public address | ✅ the laptop dials out |
-| Two laptops, different homes, nothing public | ❌ needs relay support |
+| Two laptops, different homes, one reachable member between them | ✅ relayed, then hole punched |
+| Every member behind carrier-grade NAT, nobody reachable | ❌ nothing to relay through |
 
-A cheap VPS with a public IP fixes this for a whole community: **one reachable member is
-enough**, because everyone dials it, and once connected the gossip flows in every
-direction. That member is not a server. It stores the same events as everyone else,
-has no special powers, and can vanish without taking the community with it — it is just
-the member most likely to be awake.
+A cheap VPS still earns its place, because it guarantees that last row never happens:
+**one reachable member is enough** for everybody else. That member is not a server. It
+stores the same events as everyone else, has no special powers, and can vanish without
+taking the community with it — it is just the member most likely to be awake, and the one
+most likely to be doing the carrying.
 
 ## Set it up
 
@@ -30,7 +31,8 @@ On the droplet:
 
 ```bash
 # Grab the static Linux build — no glibc version to worry about.
-VERSION=0.1.0
+# Check https://github.com/JFBrewerNZ/kahui/releases/latest for the current one.
+VERSION=0.3.0
 curl -LO https://github.com/JFBrewerNZ/kahui/releases/download/v$VERSION/kahui-$VERSION-x86_64-unknown-linux-musl.tar.gz
 tar xzf kahui-$VERSION-x86_64-unknown-linux-musl.tar.gz
 cd kahui-$VERSION-x86_64-unknown-linux-musl
@@ -119,6 +121,10 @@ drive it interactively, run it under `tmux` instead.
 Copy it and you have copied that identity — which is the point, but also the risk. There
 is nothing to reset if you lose it: an identity that vanishes simply stops posting, and
 its past messages remain valid forever.
+
+**It will relay for others by default.** A node with a public address is exactly what
+members behind routers need, and it will take on up to 64 of them without being asked.
+Bounded, but not free: `--no-relay` turns it off if the connection is metered.
 
 **Pin the port.** With `--port 0` the OS picks a new one each restart, and peers holding
 your old address have to rediscover you. A fixed port makes a returning node reappear

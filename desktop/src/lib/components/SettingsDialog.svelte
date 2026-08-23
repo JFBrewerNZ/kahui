@@ -82,6 +82,12 @@
       <button class="link" onclick={sync}>sync now</button>
       {#if syncNote}<span class="faint"> — {syncNote}</span>{/if}
     </dd>
+
+    <dt>Reachable</dt>
+    <dd>
+      <span class:good={kahui.standing.good}>{kahui.standing.label}</span>
+      <div class="faint explain">{kahui.standing.detail}</div>
+    </dd>
   </dl>
 
   {#if problem}<p class="problem">{problem}</p>{/if}
@@ -137,6 +143,15 @@
     color: var(--star);
     text-decoration: underline;
     font-size: 0.8rem;
+  }
+
+  .good {
+    color: var(--online);
+  }
+
+  .explain {
+    margin-top: 0.15rem;
+    line-height: 1.45;
   }
 
   .problem {

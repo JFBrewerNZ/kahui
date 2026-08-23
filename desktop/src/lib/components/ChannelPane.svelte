@@ -54,10 +54,11 @@
       </span>
       <span class="who">
         <span class="handle">{kahui.status?.display_name ?? "…"}</span>
-        <span class="peers faint">
-          <span class="dot" class:live={kahui.peerCount > 0}></span>
+        <span class="peers faint" title={kahui.standing.detail}>
+          <span class="dot" class:live={kahui.standing.good}></span>
           {kahui.peerCount}
           {kahui.peerCount === 1 ? "peer" : "peers"}
+          · {kahui.standing.label}
         </span>
       </span>
     </button>

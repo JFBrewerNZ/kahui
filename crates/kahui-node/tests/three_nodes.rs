@@ -42,6 +42,7 @@ async fn spawn(dir: &Path, name: &str) -> NodeHandle {
             listen: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
             enable_mdns: false,
             heartbeat: Duration::from_millis(300),
+            ..NetConfig::default()
         },
         // Brisk timers: the point is to watch convergence happen, not to wait
         // for it. The defaults are gentler.

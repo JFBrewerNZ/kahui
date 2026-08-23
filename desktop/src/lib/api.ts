@@ -55,6 +55,9 @@ export interface CommunityStatus {
   channels: number;
 }
 
+/** Whether anybody can dial this node. */
+export type Reachability = "unknown" | "direct" | "behind_nat";
+
 export interface Status {
   user: Id;
   display_name: string;
@@ -62,6 +65,11 @@ export interface Status {
   listen_addrs: string[];
   connected_peers: string[];
   communities: CommunityStatus[];
+  reachability: Reachability;
+  /** The member carrying our traffic, if we needed one. */
+  relayed_by: string | null;
+  /** How many members we are carrying for. */
+  relaying_for: number;
 }
 
 export interface InviteText {
@@ -90,6 +98,8 @@ export type NodeEvent =
   | { type: "channel_created"; community: Id; channel: Id; name: string }
   | { type: "community_created"; community: Id; name: string }
   | { type: "synced"; peer: string; community: Id; applied: number }
+  | { type: "reachability_changed"; reachability: Reachability; relayed_by: string | null }
+  | { type: "hole_punched"; peer: string }
   | { type: "warning"; message: string }
   | { type: "stopped" };
 

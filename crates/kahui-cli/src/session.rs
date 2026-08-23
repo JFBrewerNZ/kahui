@@ -285,6 +285,21 @@ impl Session {
                 short_peer(peer)
             ),
             NodeEvent::Listening { addr } => println!("· listening on {addr}"),
+            NodeEvent::ReachabilityChanged {
+                reachability,
+                relayed_by,
+            } => match relayed_by {
+                Some(peer) => println!(
+                    "· reachability: {} — {} is relaying for you",
+                    reachability.as_str(),
+                    short_peer(peer)
+                ),
+                None => println!("· reachability: {}", reachability.as_str()),
+            },
+            NodeEvent::HolePunched { peer } => println!(
+                "· connected straight to {} — no longer going through a relay",
+                short_peer(peer)
+            ),
             NodeEvent::Warning { message } => println!("! {message}"),
             NodeEvent::Stopped => println!("· node stopped"),
         }
@@ -614,6 +629,14 @@ impl Session {
                 "s"
             }
         );
+        print!("  reachable: {}", status.reachability.as_str());
+        if let Some(peer) = &status.relayed_by {
+            print!(" (relayed by {})", short_peer(peer));
+        }
+        if status.relaying_for > 0 {
+            print!(", relaying for {}", status.relaying_for);
+        }
+        println!();
         for community in status.communities {
             println!(
                 "  {} — {} events, {} member{}, {} channel{}",

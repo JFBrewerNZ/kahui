@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use kahui_node::{NetConfig, Node, NodeConfig};
+use kahui_node::{NetConfig, Node, NodeConfig, Reachability};
 use libp2p::Multiaddr;
 use tracing_subscriber::EnvFilter;
 
@@ -62,6 +62,32 @@ struct Cli {
     #[arg(long, global = true)]
     no_mdns: bool,
 
+    /// Do not carry traffic for other members, and do not ask them to carry
+    /// ours.
+    ///
+    /// Relaying is how members behind home routers stay reachable, so turning
+    /// it off makes this node a worse neighbour. Reasonable on a metered
+    /// connection; not otherwise.
+    #[arg(long, global = true)]
+    no_relay: bool,
+
+    /// Treat private addresses as real ones.
+    ///
+    /// On an isolated network — a hall, a building, a neighbourhood mesh with
+    /// no internet at all — a LAN address is the only address there is, and a
+    /// node holding one is perfectly reachable by its neighbours.
+    #[arg(long, global = true)]
+    lan: bool,
+
+    /// Say whether this node can be dialled, instead of working it out.
+    ///
+    /// Left alone, peers are asked to dial back and the answer follows from
+    /// what they find. Worth setting if you already know: `direct` for a
+    /// machine with an open port, `nat` behind carrier-grade NAT where probing
+    /// only wastes time.
+    #[arg(long, global = true, value_name = "auto|direct|nat")]
+    reachable: Option<ReachabilityArg>,
+
     /// Dial this multiaddress at startup. May be repeated.
     #[arg(long = "connect", value_name = "MULTIADDR", global = true)]
     connect: Vec<String>,
@@ -83,6 +109,27 @@ struct Cli {
 
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+/// How `--reachable` is spelled on the command line.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum ReachabilityArg {
+    /// Let peers work it out. The default.
+    Auto,
+    /// Anybody can dial us.
+    Direct,
+    /// A router is in the way; go and find a member to relay.
+    Nat,
+}
+
+impl ReachabilityArg {
+    fn resolve(self) -> Option<Reachability> {
+        match self {
+            ReachabilityArg::Auto => None,
+            ReachabilityArg::Direct => Some(Reachability::Direct),
+            ReachabilityArg::Nat => Some(Reachability::BehindNat),
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -112,6 +159,8 @@ impl Cli {
         Ok(NetConfig {
             listen,
             enable_mdns: !self.no_mdns,
+            enable_relay: !self.no_relay,
+            lan_reachable: self.lan,
             ..NetConfig::default()
         })
     }
@@ -135,6 +184,7 @@ async fn main() -> Result<()> {
         display_name: cli.name.clone(),
         net: cli.net_config()?,
         bootstrap: cli.connect.clone(),
+        reachability: cli.reachable.and_then(ReachabilityArg::resolve),
         ..NodeConfig::default()
     };
 

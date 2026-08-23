@@ -24,14 +24,16 @@ use kahui_net::{
 };
 use kahui_proto::{ChannelId, CommunityId, Event, EventId, Identity, Payload, SignedEvent, UserId};
 use kahui_store::{Inserted, PeerRecord, Store};
+use libp2p::autonat::{self, NatStatus};
+use libp2p::multiaddr::Protocol;
 use libp2p::request_response::OutboundRequestId;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{gossipsub, identify, mdns, request_response, Multiaddr, PeerId, Swarm};
+use libp2p::{dcutr, gossipsub, identify, mdns, relay, request_response, Multiaddr, PeerId, Swarm};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 
-use crate::api::{Command, CommunityStatus, Message, NodeEvent, Status};
+use crate::api::{Command, CommunityStatus, Message, NodeEvent, Reachability, Status};
 use crate::{chain, now_ms, NodeConfig, NodeError};
 
 /// How many events we hold back waiting for a predecessor before we start
@@ -42,6 +44,12 @@ const MAX_ORPHANS: usize = 2048;
 /// Peers asked for history in one anti-entropy round. Asking everyone every
 /// time is wasteful; any one peer with the events is enough.
 const SYNC_FANOUT: usize = 4;
+
+/// Relays to hold a reservation with at once.
+///
+/// One is enough to be reachable. A second is insurance against that member
+/// closing their laptop, which is a thing members do.
+const RELAY_TARGET: usize = 2;
 
 /// Members named in an invite, beyond ourselves.
 ///
@@ -141,6 +149,20 @@ pub(crate) struct Engine {
     /// community they were about.
     inflight: HashMap<OutboundRequestId, (PeerId, CommunityId)>,
     listen_addrs: Vec<Multiaddr>,
+
+    /// Whether anybody can dial us, as far as our peers can tell.
+    reachability: Reachability,
+    /// Peers that speak the relay protocol, and addresses we could dial them
+    /// on. Learned from `identify`, so no announcement is needed.
+    relay_candidates: HashMap<PeerId, Vec<Multiaddr>>,
+    /// Circuit listeners we have opened, by the member carrying them. Kept so a
+    /// reservation can be handed back once we no longer need it.
+    relay_listeners: HashMap<PeerId, libp2p::core::transport::ListenerId>,
+    /// Members who have accepted and are actually carrying for us.
+    relayed_by: HashSet<PeerId>,
+    /// Members whose traffic we are carrying. Reachable nodes pay it forward.
+    relaying_for: HashSet<PeerId>,
+
     /// Held until the loop has ended and the database has been closed, so that
     /// a caller awaiting shutdown knows the data directory is free.
     shutdown_reply: Option<crate::api::Reply<()>>,
@@ -172,6 +194,11 @@ impl Engine {
             orphans: OrphanBuffer::default(),
             inflight: HashMap::new(),
             listen_addrs: Vec::new(),
+            reachability: Reachability::Unknown,
+            relay_candidates: HashMap::new(),
+            relay_listeners: HashMap::new(),
+            relayed_by: HashSet::new(),
+            relaying_for: HashSet::new(),
             shutdown_reply: None,
         }
     }
@@ -208,6 +235,9 @@ impl Engine {
                 Tick::Presence => {
                     self.announce_presence();
                     self.redial_known_peers();
+                    // A member who could carry for us may have just arrived, or
+                    // the one who was carrying may have gone.
+                    self.seek_relay();
                 }
                 Tick::AntiEntropy => self.anti_entropy(),
                 Tick::Closed => break,
@@ -240,6 +270,13 @@ impl Engine {
     /// addresses, so it can reconnect and catch up entirely on its own. Nothing
     /// external has to remember anything on its behalf.
     fn bootstrap(&mut self) {
+        // If the operator has told us what our situation is, believe them and
+        // act on it now rather than waiting for probes to come back.
+        if let Some(reachability) = self.config.reachability {
+            self.reachability = reachability;
+            self.announce_reachability();
+        }
+
         let communities = match self.store.communities() {
             Ok(communities) => communities,
             Err(err) => {
@@ -430,13 +467,70 @@ impl Engine {
                 info,
                 ..
             })) => {
-                for addr in info.listen_addrs {
-                    self.swarm.add_peer_address(peer_id, addr);
+                for addr in &info.listen_addrs {
+                    self.swarm.add_peer_address(peer_id, addr.clone());
                 }
-                // What a peer says our address looks like from outside is the
-                // only way we learn it behind NAT.
-                self.swarm.add_external_address(info.observed_addr);
+
+                // A peer that speaks the relay protocol can carry for us if we
+                // turn out to need it. `identify` already tells us who does, so
+                // nobody has to advertise anything.
+                if info.protocols.contains(&relay::HOP_PROTOCOL_NAME) {
+                    self.relay_candidates
+                        .insert(peer_id, dialable(&info.listen_addrs));
+                    self.seek_relay();
+                }
+
+                // What a peer sees as our address is a claim, not a fact --
+                // being able to send does not mean anyone can dial back.
+                // AutoNAT settles it below, and only then is the address
+                // treated as ours.
+                if self.reachability == Reachability::Direct {
+                    self.swarm.add_external_address(info.observed_addr);
+                }
             }
+
+            // Somebody answered the question of whether we are reachable.
+            SwarmEvent::Behaviour(BehaviourEvent::Autonat(autonat::Event::StatusChanged {
+                new,
+                ..
+            })) => self.reachability_changed(new),
+
+            // A member agreed to carry for us.
+            SwarmEvent::Behaviour(BehaviourEvent::RelayClient(
+                relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
+            )) => {
+                if self.relayed_by.insert(relay_peer_id) {
+                    self.announce_reachability();
+                    // Peers only learn our new circuit address when we say so.
+                    self.announce_presence();
+                }
+            }
+
+            // We are carrying for a member who cannot be dialled.
+            SwarmEvent::Behaviour(BehaviourEvent::Relay(
+                relay::Event::ReservationReqAccepted { src_peer_id, .. },
+            )) => {
+                self.relaying_for.insert(src_peer_id);
+            }
+
+            SwarmEvent::Behaviour(BehaviourEvent::Relay(
+                relay::Event::ReservationClosed { src_peer_id }
+                | relay::Event::ReservationTimedOut { src_peer_id },
+            )) => {
+                self.relaying_for.remove(&src_peer_id);
+            }
+
+            // The relayed connection became a direct one, and the member who
+            // was carrying it is out of the path.
+            SwarmEvent::Behaviour(BehaviourEvent::Dcutr(dcutr::Event {
+                remote_peer_id,
+                result,
+            })) => match result {
+                Ok(_) => self.emit(NodeEvent::HolePunched {
+                    peer: remote_peer_id.to_string(),
+                }),
+                Err(err) => debug!(%remote_peer_id, %err, "hole punch did not get through"),
+            },
 
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                 for (peer, addr) in peers {
@@ -522,6 +616,100 @@ impl Engine {
         for community in self.joined.clone() {
             let _ = self.store.remember_peer(&community, &record);
         }
+    }
+
+    // -- reachability -------------------------------------------------------
+
+    /// Records what our peers have concluded about whether we can be dialled.
+    ///
+    /// This is the one thing a node genuinely cannot work out alone: sending a
+    /// packet proves nothing about whether anybody can send one back. AutoNAT
+    /// asks peers to try, which is why the answer is only trusted from here.
+    fn reachability_changed(&mut self, status: NatStatus) {
+        if self.config.reachability.is_some() {
+            // The operator said. Peers guessing otherwise does not change it.
+            return;
+        }
+        let next = match &status {
+            NatStatus::Public(addr) => {
+                self.swarm.add_external_address(addr.clone());
+                Reachability::Direct
+            }
+            NatStatus::Private => Reachability::BehindNat,
+            NatStatus::Unknown => Reachability::Unknown,
+        };
+        if next == self.reachability {
+            return;
+        }
+        self.reachability = next;
+
+        match next {
+            Reachability::BehindNat => self.seek_relay(),
+            // Dialable on our own account now, so stop occupying a slot that
+            // somebody else may need.
+            Reachability::Direct => self.release_relays(),
+            Reachability::Unknown => {}
+        }
+        self.announce_reachability();
+        self.announce_presence();
+    }
+
+    /// Asks reachable members to carry for us.
+    ///
+    /// The relay is a member of the community, not a service: whoever can be
+    /// dialled carries for whoever cannot. That is the whole mechanism, and it
+    /// is why a community of people behind home routers still works as long as
+    /// one of them is reachable.
+    fn seek_relay(&mut self) {
+        if self.reachability != Reachability::BehindNat {
+            return;
+        }
+        if self.relay_listeners.len() >= RELAY_TARGET {
+            return;
+        }
+
+        let candidates: Vec<(PeerId, Vec<Multiaddr>)> = self
+            .relay_candidates
+            .iter()
+            .filter(|(peer, addrs)| {
+                !addrs.is_empty()
+                    && !self.relay_listeners.contains_key(peer)
+                    && self.swarm.is_connected(peer)
+            })
+            .map(|(peer, addrs)| (*peer, addrs.clone()))
+            .collect();
+
+        for (peer, addrs) in candidates {
+            if self.relay_listeners.len() >= RELAY_TARGET {
+                break;
+            }
+            for addr in addrs {
+                let circuit = addr.with(Protocol::P2p(peer)).with(Protocol::P2pCircuit);
+                match self.swarm.listen_on(circuit.clone()) {
+                    Ok(listener) => {
+                        debug!(%peer, %circuit, "asked a member to relay for us");
+                        self.relay_listeners.insert(peer, listener);
+                        break;
+                    }
+                    Err(err) => debug!(%peer, %err, "could not ask that member to relay"),
+                }
+            }
+        }
+    }
+
+    fn release_relays(&mut self) {
+        for (peer, listener) in std::mem::take(&mut self.relay_listeners) {
+            self.swarm.remove_listener(listener);
+            debug!(%peer, "gave back a relay reservation");
+        }
+        self.relayed_by.clear();
+    }
+
+    fn announce_reachability(&self) {
+        self.emit(NodeEvent::ReachabilityChanged {
+            reachability: self.reachability,
+            relayed_by: self.relayed_by.iter().next().map(|peer| peer.to_string()),
+        });
     }
 
     // -- sync -------------------------------------------------------------
@@ -1084,20 +1272,33 @@ impl Engine {
                 .map(|peer| peer.to_string())
                 .collect(),
             communities,
+            reachability: self.reachability,
+            relayed_by: self.relayed_by.iter().next().map(|peer| peer.to_string()),
+            relaying_for: self.relaying_for.len(),
         })
     }
 
-    /// Addresses worth telling other people about.
+    /// Addresses worth telling other people about, best first.
     ///
-    /// Routable addresses come first so a peer on another machine tries those
-    /// before loopback, which only helps when everyone is on this one.
+    /// A direct routable address is the best thing to offer. A circuit address
+    /// is second: slower, and it costs a member bandwidth, but it works from
+    /// anywhere. Loopback is last, since it only helps somebody already on this
+    /// machine.
     fn public_addrs(&self) -> Vec<String> {
         let mut addrs: Vec<&Multiaddr> = self
             .listen_addrs
             .iter()
             .chain(self.swarm.external_addresses())
             .collect();
-        addrs.sort_by_key(|addr| is_loopback(addr));
+        addrs.sort_by_key(|addr| {
+            if is_loopback(addr) {
+                2
+            } else if is_circuit(addr) {
+                1
+            } else {
+                0
+            }
+        });
         addrs.dedup();
         addrs.iter().map(|addr| addr.to_string()).collect()
     }
@@ -1116,10 +1317,36 @@ impl Engine {
 }
 
 fn is_loopback(addr: &Multiaddr) -> bool {
-    use libp2p::multiaddr::Protocol;
     addr.iter().any(|part| match part {
         Protocol::Ip4(ip) => ip.is_loopback(),
         Protocol::Ip6(ip) => ip.is_loopback(),
         _ => false,
     })
+}
+
+/// True for an address that reaches a node through somebody else.
+fn is_circuit(addr: &Multiaddr) -> bool {
+    addr.iter().any(|part| matches!(part, Protocol::P2pCircuit))
+}
+
+/// Addresses we could dial a would-be relay on, best first.
+///
+/// Relaying through a relay is not a thing, so circuit addresses are dropped,
+/// and any trailing peer id is stripped because the caller appends its own.
+fn dialable(addrs: &[Multiaddr]) -> Vec<Multiaddr> {
+    let mut out: Vec<Multiaddr> = addrs
+        .iter()
+        .filter(|addr| !is_circuit(addr))
+        .map(|addr| {
+            addr.iter()
+                .filter(|part| !matches!(part, Protocol::P2p(_)))
+                .collect::<Multiaddr>()
+        })
+        .collect();
+    out.sort_by_key(is_loopback);
+    out.dedup();
+    // A handful is plenty; the rest are usually the same host on interfaces
+    // nobody can reach.
+    out.truncate(4);
+    out
 }

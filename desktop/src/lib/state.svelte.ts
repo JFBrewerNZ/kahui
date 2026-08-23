@@ -52,6 +52,33 @@ class Kahui {
   community = $derived(this.communities.find((c) => c.id === this.communityId) ?? null);
   channel = $derived(this.channels.find((c) => c.id === this.channelId) ?? null);
   peerCount = $derived(this.status?.connected_peers.length ?? 0);
+
+  /** One line about whether this node is pulling its weight. */
+  standing = $derived.by(() => {
+    const status = this.status;
+    if (!status) return { label: "starting", detail: "", good: false };
+    switch (status.reachability) {
+      case "direct":
+        return {
+          label: "reachable",
+          good: true,
+          detail:
+            status.relaying_for > 0
+              ? `serving history, and relaying for ${status.relaying_for} member${status.relaying_for === 1 ? "" : "s"}`
+              : "others can reach you directly, so you can serve history to them",
+        };
+      case "behind_nat":
+        return {
+          label: status.relayed_by ? "reachable via a member" : "not reachable yet",
+          good: !!status.relayed_by,
+          detail: status.relayed_by
+            ? "a router is in the way, so another member is carrying for you until a direct connection can be made"
+            : "a router is in the way and no member has taken you on yet — you can read and post, but cannot serve history",
+        };
+      default:
+        return { label: "checking", good: false, detail: "asking peers whether they can reach you" };
+    }
+  });
   me = $derived(this.status?.user ?? "");
 
   async init() {
@@ -117,6 +144,11 @@ class Kahui {
         if (event.community === this.communityId) {
           await Promise.all([this.loadMessages(), this.loadMembers(), this.loadChannels()]);
         }
+        return;
+
+      case "reachability_changed":
+      case "hole_punched":
+        await this.refreshStatus();
         return;
 
       case "peer_connected":

@@ -101,6 +101,9 @@ const status: Status = {
     members: 3,
     channels: 2,
   })),
+  reachability: "direct",
+  relayed_by: null,
+  relaying_for: 1,
 };
 
 const wait = <T>(value: T) => new Promise<T>((r) => setTimeout(() => r(value), 60));

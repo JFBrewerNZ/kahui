@@ -49,7 +49,7 @@ use kahui_store::{RedbStore, Store, StoreError};
 use tokio::sync::{broadcast, mpsc};
 
 pub use api::{
-    CommunityStatus, Message, NodeEvent, NodeHandle, Status, DEFAULT_COMMAND_TIMEOUT,
+    CommunityStatus, Message, NodeEvent, NodeHandle, Reachability, Status, DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_JOIN_TIMEOUT,
 };
 pub use kahui_net::{Invite, InviteError, InvitePeer, NetConfig, NetError};
@@ -115,6 +115,13 @@ pub struct NodeConfig {
     pub sync_interval: Duration,
     /// Capacity of the event broadcast channel.
     pub event_buffer: usize,
+    /// Decide our own reachability instead of waiting for peers to work it out.
+    ///
+    /// AutoNAT is usually right, but it needs peers willing to dial us back and
+    /// a little time to ask them. Somebody who knows they are behind
+    /// carrier-grade NAT can skip straight to finding a relay; somebody running
+    /// a node on a server with an open port can skip the probing entirely.
+    pub reachability: Option<Reachability>,
 }
 
 impl Default for NodeConfig {
@@ -129,6 +136,7 @@ impl Default for NodeConfig {
             presence_interval: Duration::from_secs(3),
             sync_interval: Duration::from_secs(5),
             event_buffer: 1024,
+            reachability: None,
         }
     }
 }
