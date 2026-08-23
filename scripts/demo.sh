@@ -43,8 +43,20 @@ for arg in "$@"; do
   esac
 done
 
-KAHUI="$ROOT/target/$BUILD_DIR/kahui"
-[ -x "$KAHUI" ] || KAHUI="$KAHUI.exe"
+# Resolved after the build, not before: on a clean checkout neither candidate
+# exists yet, and guessing here picked the wrong one on Linux.
+KAHUI=""
+
+resolve_binary() {
+  local candidate
+  for candidate in "$ROOT/target/$BUILD_DIR/kahui" "$ROOT/target/$BUILD_DIR/kahui.exe"; do
+    if [ -x "$candidate" ]; then
+      KAHUI="$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
 
 # The node is a native Windows executable, so under Git Bash it must be handed
 # Windows paths. Given a Unix-style "/c/Users/...", Windows reads the leading
@@ -155,7 +167,7 @@ bold "Kahui — a community hosted by its members"
 
 step "Building"
 ( cd "$ROOT" && cargo build "${PROFILE_ARGS[@]}" -p kahui-cli ) || fail "build failed"
-[ -x "$KAHUI" ] || fail "no binary at $KAHUI"
+resolve_binary || fail "no kahui binary under $ROOT/target/$BUILD_DIR after building"
 note "$KAHUI"
 
 # Leftovers from an interrupted run would hold the log files open on Windows,
