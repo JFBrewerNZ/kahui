@@ -28,16 +28,42 @@ const PATIENCE: Duration = Duration::from_secs(60);
 
 /// Starts a node with discovery limited to what the protocol provides.
 async fn spawn(dir: &Path, name: &str, reachability: Option<Reachability>) -> NodeHandle {
+    spawn_with(
+        dir,
+        name,
+        reachability,
+        vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+    )
+    .await
+}
+
+/// Starts a node that listens nowhere at all.
+///
+/// It can dial out and nothing can dial in — which is what a device on a
+/// network with no route to the wider world actually looks like from the
+/// outside, and a good deal stricter than being behind a router.
+async fn spawn_dial_only(dir: &Path, name: &str) -> NodeHandle {
+    spawn_with(dir, name, Some(Reachability::BehindNat), Vec::new()).await
+}
+
+async fn spawn_with(
+    dir: &Path,
+    name: &str,
+    reachability: Option<Reachability>,
+    listen: Vec<libp2p::Multiaddr>,
+) -> NodeHandle {
     Node::spawn(NodeConfig {
         data_dir: dir.to_path_buf(),
         display_name: Some(name.to_string()),
         net: NetConfig {
-            listen: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+            listen,
             // Off, so that finding each other has to happen the way it would
             // between strangers rather than by shouting on a shared network.
             enable_mdns: false,
             heartbeat: Duration::from_millis(300),
             enable_relay: true,
+            // No router to ask in a test, and the search would only time out.
+            enable_upnp: false,
             lan_reachable: false,
         },
         presence_interval: Duration::from_millis(400),
@@ -316,6 +342,106 @@ async fn a_reachable_member_does_not_take_a_relay_slot() {
     );
 
     for node in [&host, &guest] {
+        node.shutdown().await.ok();
+    }
+}
+
+/// The household case: one device has a connection, the others do not, and
+/// everybody is in the same community anyway.
+///
+/// The two outer nodes listen on nothing at all, so neither can dial the other
+/// even after learning its address — there is no address to learn. Every
+/// message between them has to pass through the one node in the middle.
+///
+/// What is worth noticing is *how*. The middle node is not routing packets and
+/// has not been configured as a gateway. It is an ordinary member that happens
+/// to hold the events, and gossip and sync move them onward exactly as they
+/// would to anybody else. Being the only path is not a role it was given; it is
+/// a shape the network happened to take.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn devices_with_no_way_in_still_reach_each_other_through_one_that_has() {
+    let root = TempDir::new().unwrap();
+    let dir = |name: &str| root.path().join(name);
+
+    // The one machine with a connection. It founds the community.
+    let router_pc = spawn(&dir("desk"), "desk", Some(Reachability::Direct)).await;
+    wait_until_listening(&router_pc, "desk").await;
+
+    let community = router_pc
+        .create_community("Whanau", "The household")
+        .await
+        .expect("create");
+    let general = router_pc.channels(community).await.unwrap()[0].id;
+    let invite = router_pc.invite(community).await.expect("invite");
+
+    // Two devices that can only make outbound connections.
+    let phone = spawn_dial_only(&dir("phone"), "phone").await;
+    let tablet = spawn_dial_only(&dir("tablet"), "tablet").await;
+
+    phone.join(invite.clone()).await.expect("phone joins");
+    tablet.join(invite).await.expect("tablet joins");
+
+    // Neither listens on anything of its own. Any address they do have was
+    // given to them by the machine in the middle, and goes through it — so
+    // there is no path between the phone and the tablet that avoids the desk.
+    for (name, node) in [("phone", &phone), ("tablet", &tablet)] {
+        let addrs = node.status().await.unwrap().listen_addrs;
+        assert!(
+            addrs.iter().all(|addr| addr.contains("p2p-circuit")),
+            "{name} should be reachable only through another member, got {addrs:?}"
+        );
+    }
+
+    // The desk took them both on without being asked to.
+    eventually("the desk to be carrying for both devices", || async {
+        router_pc
+            .status()
+            .await
+            .map(|s| s.relaying_for >= 2)
+            .unwrap_or(false)
+    })
+    .await;
+
+    // A message from one goes to the other, through the machine in the middle.
+    phone
+        .post(community, general, "dinner in ten")
+        .await
+        .unwrap();
+
+    eventually("the tablet to hear the phone", || async {
+        transcript(&tablet, community, general)
+            .await
+            .contains(&"phone: dinner in ten".to_string())
+    })
+    .await;
+
+    // And back the other way.
+    tablet.post(community, general, "coming").await.unwrap();
+    eventually("the phone to hear the tablet", || async {
+        transcript(&phone, community, general)
+            .await
+            .contains(&"tablet: coming".to_string())
+    })
+    .await;
+
+    // All three hold the same history, and each holds all of it.
+    let expected = vec![
+        "phone: dinner in ten".to_string(),
+        "tablet: coming".to_string(),
+    ];
+    for (name, node) in [("desk", &router_pc), ("phone", &phone), ("tablet", &tablet)] {
+        eventually(&format!("{name} to hold both messages"), || async {
+            transcript(node, community, general).await.len() == 2
+        })
+        .await;
+        assert_eq!(
+            transcript(node, community, general).await,
+            expected,
+            "{name} should hold the same transcript as everyone else"
+        );
+    }
+
+    for node in [&router_pc, &phone, &tablet] {
         node.shutdown().await.ok();
     }
 }

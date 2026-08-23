@@ -61,6 +61,9 @@ libp2p = { version = "0.56", features = [
     # Reachability. Every node both offers relaying and can use it, so a
     # community behind home routers needs no infrastructure of its own.
     "relay", "dcutr", "autonat",
+    # Ask the home router to open a port. When it works there is no relay, no
+    # hole punch and no third party at all -- just a reachable node.
+    "upnp",
 ] }
 
 [profile.release]

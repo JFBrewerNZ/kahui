@@ -28,7 +28,9 @@ use libp2p::autonat::{self, NatStatus};
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::OutboundRequestId;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{dcutr, gossipsub, identify, mdns, relay, request_response, Multiaddr, PeerId, Swarm};
+use libp2p::{
+    dcutr, gossipsub, identify, mdns, relay, request_response, upnp, Multiaddr, PeerId, Swarm,
+};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
@@ -489,6 +491,31 @@ impl Engine {
                 }
             }
 
+            // The router agreed to forward a port. This is the best possible
+            // outcome: genuinely reachable, with nobody else involved.
+            SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(addr))) => {
+                debug!(%addr, "the router opened a port for us");
+                self.swarm.add_external_address(addr);
+                self.reachability_confirmed(Reachability::Direct);
+            }
+
+            SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::ExpiredExternalAddr(addr))) => {
+                debug!(%addr, "the router took the port away again");
+                self.swarm.remove_external_address(&addr);
+                // Back to not knowing. AutoNAT will settle it, and a relay will
+                // be found if the answer turns out to be no.
+                self.reachability_confirmed(Reachability::Unknown);
+            }
+
+            SwarmEvent::Behaviour(BehaviourEvent::Upnp(
+                upnp::Event::GatewayNotFound | upnp::Event::NonRoutableGateway,
+            )) => {
+                // Perfectly ordinary: plenty of routers have UPnP switched off,
+                // and some networks have no router to ask. The relay path
+                // covers it.
+                debug!("no router willing to forward a port; relying on peers instead");
+            }
+
             // Somebody answered the question of whether we are reachable.
             SwarmEvent::Behaviour(BehaviourEvent::Autonat(autonat::Event::StatusChanged {
                 new,
@@ -638,7 +665,15 @@ impl Engine {
             NatStatus::Private => Reachability::BehindNat,
             NatStatus::Unknown => Reachability::Unknown,
         };
-        if next == self.reachability {
+        self.reachability_confirmed(next);
+    }
+
+    /// Acts on a change of reachability, whatever established it.
+    ///
+    /// A forwarded port and a successful AutoNAT probe mean the same thing and
+    /// deserve the same response, so both arrive here.
+    fn reachability_confirmed(&mut self, next: Reachability) {
+        if self.config.reachability.is_some() || next == self.reachability {
             return;
         }
         self.reachability = next;

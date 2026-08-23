@@ -184,6 +184,12 @@ other members go offline.
 
 Three protocols fix that, and none of them is a service:
 
+**UPnP** is tried first, because it is the best outcome available: the node asks the home
+router to forward a port, and if it agrees the node is simply reachable — no relay, no hole
+punch, nobody else involved at all. Most consumer routers support it and have it on. When
+that fails, and it often will, the rest of this section is the fallback rather than the
+plan.
+
 **AutoNAT** answers the one question a node genuinely cannot answer alone. Sending a packet
 proves nothing about whether anybody can send one back, so the node asks peers to dial it
 and believes what they find. Until then its reachability is `Unknown`, and an address a
@@ -209,6 +215,48 @@ A node can be told the answer instead of waiting for it — `--reachable direct`
 with an open port, `--reachable nat` behind carrier-grade NAT where probing only wastes
 time — and `--lan` says that private addresses are the real addresses, which they are on
 a network with no internet behind it.
+
+## 5c. Paths, and why there is no routing
+
+A reasonable thing to want is a network that finds the lowest-latency path between two
+people and spreads load along it. Kāhui does not do that, and mostly does not need to,
+which is worth explaining because the reason is the interesting part.
+
+**Routing and propagation are different problems.** Routing asks: *what is the best path
+from A to D, right now?* It needs a path to exist at one moment, and computing the good one
+is worth effort. Propagation asks: *how do these events reach everyone, eventually?* It
+needs only that each node, at some point, meets somebody holding newer data.
+
+Kāhui is entirely the second problem. That is why the chain test in
+[`carry_and_relay.rs`](../crates/kahui-node/tests/carry_and_relay.rs) works at all: a
+message reaches the fourth node when no path to it ever existed, at any instant. A router
+would have had nothing to compute. Replication did not care.
+
+So the questions a routing layer would answer — which hop is fastest, which link is
+congested — mostly do not arise. What does arise is narrower, and is handled:
+
+| Want | How it happens |
+|---|---|
+| Prefer a direct connection over a relayed one | DCUtR upgrades automatically, and the relay leaves the path |
+| Spread the carrying across members | a node takes two reservations, not one, and relaying is capped at 64 reservations and 32 circuits per member |
+| Spread the serving of history | every member serves; sync goes to whichever peers are connected, not to a designated one |
+| Keep a lively mesh | gossipsub's own maintenance prefers peers that respond |
+
+**What is genuinely not there**, stated plainly:
+
+- **No multi-hop relaying.** Circuit relay v2 is single-hop by design, and a relay will only
+  connect to destinations that hold a reservation with it. It is a way to reach a specific
+  unreachable peer, not a general router. A chain of three relays is not a thing.
+- **No latency measurement or path selection.** Nothing times anything and nothing chooses
+  between paths on that basis.
+- **No load balancing.** Limits stop any one member being overwhelmed; nothing measures
+  load and rebalances against it.
+
+Building real mesh routing — Babel, BATMAN, that family — is a serious undertaking, and
+for a chat application it would be solving a problem the data model has already dissolved.
+The case where it would genuinely help is live conversation across a long chain of hops,
+and that is also the case where the honest answer is that the latency is dominated by
+people walking between buildings rather than by path choice.
 
 ## 6. Storage
 

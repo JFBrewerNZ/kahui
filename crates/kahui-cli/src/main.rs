@@ -71,6 +71,14 @@ struct Cli {
     #[arg(long, global = true)]
     no_relay: bool,
 
+    /// Do not ask the router to forward a port.
+    ///
+    /// UPnP is the cheapest way to become reachable, and there is no downside
+    /// beyond the request itself. Worth turning off only where the network
+    /// administrator would rather you did not.
+    #[arg(long, global = true)]
+    no_upnp: bool,
+
     /// Treat private addresses as real ones.
     ///
     /// On an isolated network — a hall, a building, a neighbourhood mesh with
@@ -160,6 +168,7 @@ impl Cli {
             listen,
             enable_mdns: !self.no_mdns,
             enable_relay: !self.no_relay,
+            enable_upnp: !self.no_upnp,
             lan_reachable: self.lan,
             ..NetConfig::default()
         })

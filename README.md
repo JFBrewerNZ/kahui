@@ -137,9 +137,33 @@ resulting address alongside its direct ones. The moment a relayed connection exi
 [DCUtR](https://libp2p.io/docs/dcutr/) uses it to coordinate a hole punch, and the relay
 drops out of the path.
 
+Before any of that, the node asks the home router to forward a port over UPnP. When the
+router agrees — most consumer routers do — there is no relay and no hole punch, just a
+reachable node. The rest is the fallback.
+
 The relay is a member of the community, not a service. Nothing is configured, nothing is
 hosted, and the node doing the carrying is running exactly the same binary as everyone
 else. One reachable member is enough for a community of people who are not.
+
+**So, concretely:**
+
+| Two people, both at home, no server anywhere | Result |
+|---|---|
+| Either router allows UPnP | ✅ that node is reachable; the other dials it |
+| Neither allows UPnP, but one can forward a port by hand | ✅ same |
+| Neither, but a third member is reachable | ✅ relayed, then usually hole punched |
+| Neither, no third member, both behind carrier-grade NAT | ❌ nothing to build a path out of |
+
+The last row is the honest limit, and it is why a node on a cheap VPS is still worth having
+in a community — not as a server, but as the member most likely to be reachable. See
+[running on a server](docs/running-on-a-server.md).
+
+**A household where one device has a connection and the others do not** works today, and
+not by routing: the connected device is an ordinary member that happens to hold the
+events, and gossip and sync carry them onward exactly as they would to anybody else. It
+also ends up relaying for the others without being asked. There is a test for it.
+[Why there is no routing layer](docs/architecture.md#5c-paths-and-why-there-is-no-routing)
+explains what that does and does not buy you.
 
 ### Why the founder is not special
 

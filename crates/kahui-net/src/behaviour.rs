@@ -6,6 +6,7 @@
 //! | `request-response` | direct sync, for catching up on what gossip missed |
 //! | `identify` | learn our own address, our peers' addresses, and what they speak |
 //! | `mdns` | find members on the same network with no configuration at all |
+//! | `upnp` | ask the home router to open a port, so nothing else is needed |
 //! | `autonat` | find out whether anybody can actually dial us |
 //! | `relay` (server) | carry traffic for members who cannot be dialled |
 //! | `relay` (client) | be carried, when we are one of them |
@@ -28,7 +29,7 @@ use libp2p::swarm::NetworkBehaviour;
 use libp2p::{
     autonat, dcutr, gossipsub, identify, mdns, noise, relay,
     request_response::{self, ProtocolSupport},
-    tcp, yamux, Multiaddr, StreamProtocol, Swarm, SwarmBuilder,
+    tcp, upnp, yamux, Multiaddr, StreamProtocol, Swarm, SwarmBuilder,
 };
 
 use crate::wire::{topic_name, GossipMessage, SyncRequest, SyncResponse, SYNC_PROTOCOL};
@@ -64,6 +65,14 @@ pub struct NetConfig {
     /// On by default. A community that cannot reach its own members has not
     /// avoided depending on infrastructure; it has just failed.
     pub enable_relay: bool,
+    /// Ask the router to forward a port, using UPnP.
+    ///
+    /// When it works this is by far the best outcome: the node becomes
+    /// genuinely reachable, with no relay, no hole punch and nobody else
+    /// involved at all. Most consumer routers support it and have it switched
+    /// on. Some have it switched off, and a few have it switched off for good
+    /// reasons, so this fails quietly and the relay path takes over.
+    pub enable_upnp: bool,
     /// Whether a private address counts as being reachable.
     ///
     /// On the internet `192.168.1.5` means nothing to anybody outside the
@@ -91,6 +100,7 @@ impl Default for NetConfig {
             enable_mdns: true,
             heartbeat: Duration::from_secs(1),
             enable_relay: true,
+            enable_upnp: true,
             lan_reachable: false,
         }
     }
@@ -112,6 +122,8 @@ pub struct Behaviour {
     pub relay_client: Toggle<relay::client::Behaviour>,
     /// Turning a carried connection into a direct one.
     pub dcutr: Toggle<dcutr::Behaviour>,
+    /// Asking the router nicely, which is better than all of the above.
+    pub upnp: Toggle<upnp::tokio::Behaviour>,
 }
 
 impl Behaviour {
@@ -214,6 +226,12 @@ impl Behaviour {
             (Toggle::from(None), Toggle::from(None), Toggle::from(None))
         };
 
+        let upnp = if config.enable_upnp {
+            Toggle::from(Some(upnp::tokio::Behaviour::default()))
+        } else {
+            Toggle::from(None)
+        };
+
         Ok(Behaviour {
             gossipsub,
             sync,
@@ -223,6 +241,7 @@ impl Behaviour {
             relay,
             relay_client,
             dcutr,
+            upnp,
         })
     }
 
