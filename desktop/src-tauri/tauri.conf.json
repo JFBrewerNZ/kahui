@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kahui",
-  "version": "0.1.0",
   "identifier": "nz.kahui.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
