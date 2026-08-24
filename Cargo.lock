@@ -2816,7 +2816,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-cli"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-desktop"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "directories",
  "kahui-node",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-net"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "bs58",
  "futures",
@@ -2870,7 +2870,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-node"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "futures",
  "kahui-net",
@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-proto"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blake3",
  "bs58",
@@ -2903,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-store"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "kahui-proto",
  "redb",
