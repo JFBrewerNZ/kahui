@@ -38,6 +38,8 @@ const CHANNELS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("channels")
 const MEMBERS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("members");
 /// `community || peer_id -> PeerRecord`
 const PEERS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("peers");
+/// Reachable nodes willing to relay. `peer_id -> PeerRecord`, no community.
+const RELAYS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("relays");
 /// Node-local settings, outside the replicated log. `key -> value`
 const META: TableDefinition<&str, &[u8]> = TableDefinition::new("meta");
 
@@ -88,6 +90,7 @@ impl RedbStore {
             txn.open_table(CHANNELS)?;
             txn.open_table(MEMBERS)?;
             txn.open_table(PEERS)?;
+            txn.open_table(RELAYS)?;
             txn.open_table(META)?;
         }
         txn.commit()?;
@@ -496,6 +499,49 @@ impl Store for RedbStore {
             };
             let encoded = encode(&merged)?;
             table.insert(key.as_slice(), encoded.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    fn relays(&self) -> Result<Vec<PeerRecord>> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(RELAYS)?;
+        let mut out = Vec::new();
+        for row in table.iter()? {
+            let (_, value) = row?;
+            out.push(decode::<PeerRecord>(value.value())?);
+        }
+        out.sort_by_key(|peer| std::cmp::Reverse(peer.last_seen_ms));
+        Ok(out)
+    }
+
+    fn remember_relay(&self, peer: &PeerRecord) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(RELAYS)?;
+            let existing: Option<PeerRecord> = match table.get(peer.peer_id.as_slice())? {
+                Some(guard) => Some(decode(guard.value())?),
+                None => None,
+            };
+            let mut addrs = peer.addrs.clone();
+            if let Some(existing) = &existing {
+                for addr in &existing.addrs {
+                    if !addrs.contains(addr) {
+                        addrs.push(addr.clone());
+                    }
+                }
+            }
+            addrs.truncate(MAX_PEER_ADDRS);
+            let merged = PeerRecord {
+                peer_id: peer.peer_id.clone(),
+                addrs,
+                last_seen_ms: peer
+                    .last_seen_ms
+                    .max(existing.map_or(0, |e| e.last_seen_ms)),
+            };
+            let encoded = encode(&merged)?;
+            table.insert(peer.peer_id.as_slice(), encoded.as_slice())?;
         }
         txn.commit()?;
         Ok(())

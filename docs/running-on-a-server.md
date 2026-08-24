@@ -25,14 +25,25 @@ stores the same events as everyone else, has no special powers, and can vanish w
 taking the community with it — it is just the member most likely to be awake, and the one
 most likely to be doing the carrying.
 
-## Which end creates the community
+## Either end can host
 
-**Create it on the droplet, join from your laptop.** Not the other way round.
+A laptop behind a home router can create a community other people join. It needs to have
+met one reachable node, once — after that the node is remembered, across restarts and
+across every community, and the laptop is relayed before a community even exists.
 
-A laptop behind a home router has no address anybody outside can dial, so an invite it
-mints contains nothing but `192.168.x.x` and loopback. The droplet cannot reach either and
-the join sits there until it times out. Members relay for each other, but only once they
-have met — and the very first invite is how they meet.
+If you have a droplet, that reachable node is the droplet. Connect to it once:
+
+```
+/ip4/YOUR_DROPLET_IP/tcp/4001/p2p/DROPLET_PEER_ID
+```
+
+`--connect` on the command line, or **Settings → Connect to a peer** in the app. Nothing
+to repeat.
+
+If you have no reachable node at all, the alternatives are to make yourself one — UPnP,
+or forwarding your port — or to be invited into a community that has one. Two machines
+both behind routers, with nothing reachable between them, cannot find each other; that is
+true of every peer-to-peer system, not just this one.
 
 Check any invite before sending it:
 
@@ -40,16 +51,7 @@ Check any invite before sending it:
 kahui inspect kahui://join/kahui1...
 ```
 
-If it says *local network only*, whoever made it is not reachable yet.
-
-Once your laptop has joined a community containing the droplet, it gets a relay
-reservation and its own invites start working. The awkward step is only the first one. To
-bootstrap the other direction, dial the droplet by hand first — `--connect` on the command
-line, or **Connect to a peer** in the app's settings:
-
-```
-/ip4/YOUR_DROPLET_IP/tcp/4001/p2p/DROPLET_PEER_ID
-```
+*Local network only* means whoever made it is not reachable yet.
 
 ## Set it up
 

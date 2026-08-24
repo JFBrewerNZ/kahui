@@ -442,7 +442,9 @@ impl Session {
         if !usable {
             // Handing somebody an invite that cannot possibly work, and letting
             // them discover it by waiting for a timeout, is the worst of both.
-            self.problem("This only works on your network — nothing outside it can reach you.");
+            self.problem(
+                "Only works on your network. Forward your port, or /dial someone who can relay.",
+            );
         }
         Ok(())
     }

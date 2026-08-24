@@ -47,7 +47,10 @@
       onclick={() => box?.select()}
     ></textarea>
     {#if !invite.reachable}
-      <p class="warn">Works on your network only. Nothing outside it can reach you yet.</p>
+      <p class="warn">
+        Works on your network only. Forward port {kahui.port} to this machine, or connect
+        to someone who can relay — Settings, Connect to a peer.
+      </p>
     {/if}
   {:else if problem}
     <p class="problem">{problem}</p>

@@ -64,6 +64,15 @@ class Kahui {
   channel = $derived(this.channels.find((c) => c.id === this.channelId) ?? null);
   peerCount = $derived(this.status?.connected_peers.length ?? 0);
 
+  /** The port this node listens on, for telling somebody what to forward. */
+  port = $derived.by(() => {
+    for (const addr of this.status?.listen_addrs ?? []) {
+      const match = addr.match(/\/(?:tcp|udp)\/(\d+)/);
+      if (match) return match[1];
+    }
+    return "";
+  });
+
   /** One line about whether this node is pulling its weight. */
   standing = $derived.by(() => {
     const status = this.status;

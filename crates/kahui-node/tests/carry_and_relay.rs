@@ -445,3 +445,118 @@ async fn devices_with_no_way_in_still_reach_each_other_through_one_that_has() {
         node.shutdown().await.ok();
     }
 }
+
+/// Somebody behind a router creates a community, and other people join it.
+///
+/// This is the ordinary case — a person on a laptop starting a server for their
+/// friends — and it used to be impossible. A node only looked for a relay among
+/// peers it was already connected to, and a node that has just created a
+/// community has none, so it could never become reachable and its invites named
+/// addresses only its own network could use.
+///
+/// Meeting one reachable node, once, is now enough. It is remembered across
+/// restarts and across communities, because relaying has nothing to do with
+/// membership.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn somebody_behind_a_router_can_host_a_community() {
+    let root = TempDir::new().unwrap();
+    let dir = |name: &str| root.path().join(name);
+
+    // A reachable node. Not a member of anything — just somebody who can be
+    // dialled and is willing to carry.
+    let helper = spawn(&dir("helper"), "helper", Some(Reachability::Direct)).await;
+    wait_until_listening(&helper, "helper").await;
+    let helper_addr = helper.status().await.unwrap().listen_addrs[0].clone();
+    let helper_dial = format!("{helper_addr}/p2p/{}", helper.peer_id());
+
+    // Someone on a laptop behind a router. They meet the helper once.
+    let host = spawn(&dir("host"), "host", Some(Reachability::BehindNat)).await;
+    host.dial(helper_dial.clone())
+        .await
+        .expect("meet the helper");
+
+    eventually("the laptop to be carried by somebody", || async {
+        host.status()
+            .await
+            .map(|s| s.relayed_by.is_some())
+            .unwrap_or(false)
+    })
+    .await;
+
+    // Now they start a community. Nobody is in it and nobody has been invited.
+    let community = host.create_community("Games", "").await.expect("create");
+    let general = host.channels(community).await.unwrap()[0].id;
+
+    // The invite names a way in that does not require reaching the laptop
+    // directly.
+    let invite = host.invite(community).await.expect("invite");
+    assert!(
+        invite
+            .dial_addresses()
+            .iter()
+            .any(|a| a.contains("p2p-circuit")),
+        "the invite should offer a relayed route, got {:?}",
+        invite.dial_addresses()
+    );
+
+    // And somebody else can use it.
+    let guest = spawn(&dir("guest"), "guest", Some(Reachability::Direct)).await;
+    guest
+        .join(invite)
+        .await
+        .expect("guest joins a community hosted behind a router");
+
+    host.post(community, general, "anyone can host this")
+        .await
+        .unwrap();
+    eventually("the guest to hear the host", || async {
+        transcript(&guest, community, general)
+            .await
+            .contains(&"host: anyone can host this".to_string())
+    })
+    .await;
+
+    for node in [&helper, &host, &guest] {
+        node.shutdown().await.ok();
+    }
+}
+
+/// The laptop does not have to be told about the helper twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_relay_met_once_is_remembered_across_restarts() {
+    let root = TempDir::new().unwrap();
+    let dir = |name: &str| root.path().join(name);
+
+    let helper = spawn(&dir("helper"), "helper", Some(Reachability::Direct)).await;
+    wait_until_listening(&helper, "helper").await;
+    let helper_addr = helper.status().await.unwrap().listen_addrs[0].clone();
+
+    let host = spawn(&dir("host"), "host", Some(Reachability::BehindNat)).await;
+    host.dial(format!("{helper_addr}/p2p/{}", helper.peer_id()))
+        .await
+        .expect("meet the helper");
+    eventually("the first reservation", || async {
+        host.status()
+            .await
+            .map(|s| s.relayed_by.is_some())
+            .unwrap_or(false)
+    })
+    .await;
+
+    host.shutdown().await.expect("stop");
+    drop(host);
+
+    // Same data directory, nothing dialled by hand this time.
+    let host = spawn(&dir("host"), "host", Some(Reachability::BehindNat)).await;
+    eventually("the laptop to find its relay again on its own", || async {
+        host.status()
+            .await
+            .map(|s| s.relayed_by.is_some())
+            .unwrap_or(false)
+    })
+    .await;
+
+    for node in [&helper, &host] {
+        node.shutdown().await.ok();
+    }
+}

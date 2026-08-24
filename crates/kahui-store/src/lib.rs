@@ -202,6 +202,17 @@ pub trait Store: Send + Sync + 'static {
 
     fn remember_peer(&self, community: &CommunityId, peer: &PeerRecord) -> Result<()>;
 
+    /// Nodes that can be dialled and are willing to relay, remembered across
+    /// every community and every restart.
+    ///
+    /// Kept separately from community peers because relaying has nothing to do
+    /// with membership: any reachable node will carry for any other. Somebody
+    /// who has met one reachable node, ever, should not go back to being
+    /// unreachable just because they started a new community.
+    fn relays(&self) -> Result<Vec<PeerRecord>>;
+
+    fn remember_relay(&self, peer: &PeerRecord) -> Result<()>;
+
     /// Node-local settings that are not part of the replicated log: the private
     /// key, the operator's display name, and so on.
     fn meta_get(&self, key: &str) -> Result<Option<Vec<u8>>>;

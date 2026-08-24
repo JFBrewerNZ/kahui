@@ -53,6 +53,9 @@ const SYNC_FANOUT: usize = 4;
 /// closing their laptop, which is a thing members do.
 const RELAY_TARGET: usize = 2;
 
+/// Remembered relays to reconnect to at startup.
+const RELAY_MEMORY: usize = 8;
+
 /// Members named in an invite, beyond ourselves.
 ///
 /// An invite that names several members keeps working after any one of them
@@ -237,6 +240,9 @@ impl Engine {
                 Tick::Presence => {
                     self.announce_presence();
                     self.redial_known_peers();
+                    if self.relayed_by.is_empty() {
+                        self.dial_known_relays();
+                    }
                     // A member who could carry for us may have just arrived, or
                     // the one who was carrying may have gone.
                     self.seek_relay();
@@ -279,6 +285,12 @@ impl Engine {
             self.announce_reachability();
         }
 
+        // Reachable nodes we have met before, whatever community that was in.
+        // This is what lets somebody behind a router create a community and
+        // hand out an invite that works: they are already relayed before the
+        // community exists.
+        self.dial_known_relays();
+
         let communities = match self.store.communities() {
             Ok(communities) => communities,
             Err(err) => {
@@ -302,6 +314,52 @@ impl Engine {
                 }
                 Err(err) => self.warn(format!("bootstrap address {addr}: {err}")),
             }
+        }
+    }
+
+    /// Files away a node that has carried for us, so the next run can go
+    /// straight back to it.
+    fn remember_relay(&mut self, peer: PeerId) {
+        let addrs: Vec<String> = self
+            .relay_candidates
+            .get(&peer)
+            .map(|addrs| addrs.iter().map(|addr| addr.to_string()).collect())
+            .unwrap_or_default();
+        if addrs.is_empty() {
+            return;
+        }
+        let record = PeerRecord {
+            peer_id: peer.to_bytes(),
+            addrs,
+            last_seen_ms: now_ms(),
+        };
+        if let Err(err) = self.store.remember_relay(&record) {
+            debug!(%err, "could not remember a relay");
+        }
+    }
+
+    /// Reconnects to relays remembered from previous runs.
+    fn dial_known_relays(&mut self) {
+        let relays = match self.store.relays() {
+            Ok(relays) => relays,
+            Err(err) => {
+                debug!(%err, "could not read remembered relays");
+                return;
+            }
+        };
+        for record in relays.into_iter().take(RELAY_MEMORY) {
+            let Ok(peer) = PeerId::from_bytes(&record.peer_id) else {
+                continue;
+            };
+            if peer == *self.swarm.local_peer_id() || self.swarm.is_connected(&peer) {
+                continue;
+            }
+            for addr in &record.addrs {
+                if let Ok(addr) = addr.parse::<Multiaddr>() {
+                    self.swarm.add_peer_address(peer, addr);
+                }
+            }
+            let _ = self.swarm.dial(peer);
         }
     }
 
@@ -527,6 +585,12 @@ impl Engine {
                 relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
             )) => {
                 if self.relayed_by.insert(relay_peer_id) {
+                    // This one actually carried for us, which is a far better
+                    // recommendation than merely speaking the protocol. Keep it
+                    // for good and for every community: relaying has nothing to
+                    // do with membership, and somebody who has met one willing
+                    // node should never go back to being unreachable.
+                    self.remember_relay(relay_peer_id);
                     self.announce_reachability();
                     // Peers only learn our new circuit address when we say so.
                     self.announce_presence();
