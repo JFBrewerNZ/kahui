@@ -77,6 +77,7 @@ export interface InviteText {
   link: string;
   communityName: string;
   peerCount: number;
+  reachable: boolean;
 }
 
 export interface Ready {

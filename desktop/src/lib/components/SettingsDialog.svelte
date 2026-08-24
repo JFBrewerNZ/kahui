@@ -14,6 +14,8 @@
   let syncNote = $state("");
   let key = $state("");
   let keyShown = $state(false);
+  let peer = $state("");
+  let peerNote = $state("");
 
   async function revealKey() {
     try {
@@ -37,6 +39,18 @@
       problem = errorText(err);
     } finally {
       working = false;
+    }
+  }
+
+  async function connect() {
+    if (!peer.trim()) return;
+    peerNote = "Connecting…";
+    try {
+      await api.dial(peer.trim());
+      peerNote = "Dialling.";
+      peer = "";
+    } catch (err) {
+      peerNote = errorText(err);
     }
   }
 
@@ -98,6 +112,24 @@
       <div class="faint explain">{kahui.standing.detail}</div>
     </dd>
   </dl>
+
+  <!-- The escape hatch for the one case the protocol cannot bootstrap itself:
+       nobody can reach you, and you know nobody yet, so there is no member to
+       relay for you. Dial one by hand and the rest follows. -->
+  <section class="peer">
+    <h3>Connect to a peer</h3>
+    <div class="row">
+      <input
+        class="field mono"
+        bind:value={peer}
+        placeholder="/ip4/203.0.113.4/tcp/4001/p2p/12D3Koo…"
+        spellcheck="false"
+        onkeydown={(e) => e.key === "Enter" && connect()}
+      />
+      <button class="btn" onclick={connect} disabled={!peer.trim()}>Connect</button>
+    </div>
+    {#if peerNote}<p class="faint note">{peerNote}</p>{/if}
+  </section>
 
   <!-- The one piece of genuinely unrecoverable state. Worth a section rather
        than a line, and worth hiding until asked for. -->
@@ -171,11 +203,24 @@
     line-height: 1.45;
   }
 
+  .peer,
   .key {
     margin-top: 1.2rem;
     padding-top: 1rem;
     border-top: 1px solid var(--line);
   }
+  .row {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .row .field {
+    font-size: 0.78rem;
+  }
+  .note {
+    font-size: 0.8rem;
+    margin: 0.5rem 0 0;
+  }
+  .peer h3,
   .key h3 {
     margin: 0 0 0.4rem;
     font-size: 0.72rem;

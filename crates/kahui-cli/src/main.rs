@@ -146,6 +146,11 @@ enum Command {
     Run,
     /// Print this node's identity and exit.
     Id,
+    /// Show what an invite actually contains, and whether it can work.
+    Inspect {
+        /// A `kahui1…` code or a `kahui://join/…` link.
+        invite: String,
+    },
 }
 
 impl Cli {
@@ -214,6 +219,31 @@ async fn main() -> Result<()> {
             node.shutdown().await.ok();
             Ok(())
         }
+        Some(Command::Inspect { invite }) => {
+            let invite = kahui_node::Invite::decode(&invite)?;
+            println!("community : {} ({})", invite.name, invite.community.short());
+            println!("peers     : {}", invite.peers.len());
+            for peer in &invite.peers {
+                println!("  {}", peer.peer_id);
+                for addr in &peer.addrs {
+                    println!("    {addr}");
+                }
+            }
+            if invite.reachable_beyond_lan() {
+                println!(
+                    "
+Usable from the internet."
+                );
+            } else {
+                println!(
+                    "
+Local network only: every address in it is private or loopback."
+                );
+            }
+            node.shutdown().await.ok();
+            Ok(())
+        }
+
         Some(Command::Run) | None => {
             session::run(
                 node,

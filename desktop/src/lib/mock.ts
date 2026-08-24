@@ -148,6 +148,7 @@ export const mockApi = {
         "kahui://join/kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o4Q9nSATPx7qva2efab5SzXF1rQBQ3y9cB5BnnNP2ZtBwQ5qoMicjTq5nk38RKZ1SySvUq6NcDWSGqdJ9dhZW8MDoBAouVYuW3TNMX9JffeTtNMN6xidiK3P89KhopiSpiLzXA46Mi8AyDGTzgmiVvu7KcAUm3YGZDtvVNTV5xTSjCsypipsYrVQ2BXisWq9oAHmZnJtNvGfTwKBjMytSKeqwtCy4VaJigAUFXJ6Htcf4ANcPW2uYD7bxB2ZkeDE1R4Fz",
       communityName: "Aotearoa",
       peerCount: 3,
+      reachable: true,
     }),
   setDisplayName: async (_name: string) => {},
   syncNow: () => wait(2),

@@ -46,6 +46,9 @@
       value={invite.link}
       onclick={() => box?.select()}
     ></textarea>
+    {#if !invite.reachable}
+      <p class="warn">Works on your network only. Nothing outside it can reach you yet.</p>
+    {/if}
   {:else if problem}
     <p class="problem">{problem}</p>
   {:else}
@@ -68,10 +71,14 @@
     word-break: break-all;
     color: var(--star);
   }
+  .warn,
+  .problem {
+    margin: 0.7rem 0 0;
+    font-size: 0.82rem;
+    color: var(--danger);
+  }
   .problem {
     margin: 0;
-    font-size: 0.85rem;
-    color: var(--danger);
   }
   .actions {
     display: flex;

@@ -424,16 +424,25 @@ impl Session {
     async fn invite(&mut self) -> Result<()> {
         let focus = self.require_focus()?;
         let invite = self.node.invite(focus.community).await?;
-        let token = invite.encode();
+        let usable = invite.reachable_beyond_lan();
+
         if self.json {
             self.emit(json!({
                 "type": "invite",
                 "community": focus.community.to_hex(),
                 "name": invite.name,
-                "invite": token,
+                "invite": invite.encode(),
+                "link": invite.to_link(),
+                "reachable": usable,
             }));
-        } else {
-            println!("invite: {token}");
+            return Ok(());
+        }
+
+        println!("invite: {}", invite.to_link());
+        if !usable {
+            // Handing somebody an invite that cannot possibly work, and letting
+            // them discover it by waiting for a timeout, is the worst of both.
+            self.problem("This only works on your network — nothing outside it can reach you.");
         }
         Ok(())
     }

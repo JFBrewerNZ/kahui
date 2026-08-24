@@ -118,6 +118,20 @@ impl Invite {
         Ok(invite)
     }
 
+    /// Whether anybody outside the minter's own network could use this.
+    ///
+    /// An invite is only as good as the addresses in it. A node behind a router
+    /// with no relay has nothing but `192.168.x.x` and loopback to offer, which
+    /// works on its own network and nowhere else — so handing that invite to
+    /// somebody on the internet cannot work, and it is worth saying before they
+    /// find out by waiting.
+    pub fn reachable_beyond_lan(&self) -> bool {
+        self.peers
+            .iter()
+            .flat_map(|peer| peer.addrs.iter())
+            .any(|addr| addr_is_global(addr))
+    }
+
     /// Dialable multiaddresses, with the peer id appended so libp2p can verify
     /// it is talking to who it expected.
     pub fn dial_addresses(&self) -> Vec<String> {
@@ -130,6 +144,32 @@ impl Invite {
             })
             .collect()
     }
+}
+
+/// True if a multiaddress string contains an IP anybody on the internet could
+/// route to.
+///
+/// Deliberately textual: an invite carries addresses as strings, and parsing
+/// them into a `Multiaddr` just to look at the first component would make this
+/// crate's simplest type depend on libp2p's.
+fn addr_is_global(addr: &str) -> bool {
+    addr.split('/')
+        .filter_map(|part| part.parse::<std::net::IpAddr>().ok())
+        .any(|ip| match ip {
+            std::net::IpAddr::V4(v4) => {
+                !(v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_documentation()
+                    || v4.is_unspecified()
+                    // 100.64.0.0/10, what carrier-grade NAT hands out.
+                    || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1])))
+            }
+            std::net::IpAddr::V6(v6) => {
+                !(v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00)
+            }
+        })
 }
 
 #[cfg(test)]
@@ -156,6 +196,40 @@ mod tests {
         let text = invite.encode();
         assert!(text.starts_with(INVITE_PREFIX));
         assert_eq!(Invite::decode(&text).unwrap(), invite);
+    }
+
+    #[test]
+    fn an_invite_with_only_lan_addresses_says_so() {
+        let lan = Invite::new(
+            CommunityId::from_bytes([1; 32]),
+            "Games",
+            vec![InvitePeer {
+                peer_id: "12D3KooWabc".into(),
+                addrs: vec![
+                    "/ip4/192.168.1.143/tcp/4001".into(),
+                    "/ip4/127.0.0.1/tcp/4001".into(),
+                ],
+            }],
+        );
+        assert!(!lan.reachable_beyond_lan());
+
+        let public = Invite::new(
+            CommunityId::from_bytes([1; 32]),
+            "Games",
+            vec![InvitePeer {
+                peer_id: "12D3KooWabc".into(),
+                addrs: vec!["/ip4/64.23.186.93/tcp/4001".into()],
+            }],
+        );
+        assert!(public.reachable_beyond_lan());
+    }
+
+    #[test]
+    fn carrier_grade_nat_is_not_reachable_either() {
+        // 100.64.0.0/10 looks public and is not.
+        assert!(!addr_is_global("/ip4/100.90.1.5/tcp/4001"));
+        assert!(!addr_is_global("/ip4/10.124.0.3/tcp/4001"));
+        assert!(addr_is_global("/ip4/8.8.8.8/tcp/4001"));
     }
 
     #[test]

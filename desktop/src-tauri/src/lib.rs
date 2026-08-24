@@ -388,6 +388,9 @@ pub struct InviteText {
     /// How many members are named in it. More than one means the invite keeps
     /// working after any of them goes offline.
     pub peer_count: usize,
+    /// False when every address in it is private or loopback, so it can only be
+    /// used by somebody on the same network.
+    pub reachable: bool,
 }
 
 #[tauri::command]
@@ -401,6 +404,7 @@ async fn make_invite(
         link: invite.to_link(),
         community_name: invite.name.clone(),
         peer_count: invite.peers.len(),
+        reachable: invite.reachable_beyond_lan(),
     })
 }
 

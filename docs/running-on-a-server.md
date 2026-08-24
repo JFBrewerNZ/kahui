@@ -25,6 +25,32 @@ stores the same events as everyone else, has no special powers, and can vanish w
 taking the community with it — it is just the member most likely to be awake, and the one
 most likely to be doing the carrying.
 
+## Which end creates the community
+
+**Create it on the droplet, join from your laptop.** Not the other way round.
+
+A laptop behind a home router has no address anybody outside can dial, so an invite it
+mints contains nothing but `192.168.x.x` and loopback. The droplet cannot reach either and
+the join sits there until it times out. Members relay for each other, but only once they
+have met — and the very first invite is how they meet.
+
+Check any invite before sending it:
+
+```bash
+kahui inspect kahui://join/kahui1...
+```
+
+If it says *local network only*, whoever made it is not reachable yet.
+
+Once your laptop has joined a community containing the droplet, it gets a relay
+reservation and its own invites start working. The awkward step is only the first one. To
+bootstrap the other direction, dial the droplet by hand first — `--connect` on the command
+line, or **Connect to a peer** in the app's settings:
+
+```
+/ip4/YOUR_DROPLET_IP/tcp/4001/p2p/DROPLET_PEER_ID
+```
+
 ## Set it up
 
 On the droplet:
