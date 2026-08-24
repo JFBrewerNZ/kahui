@@ -188,7 +188,7 @@ done
 # 1 -------------------------------------------------------------------------
 step "1. Node A founds a community"
 start_node a alice "$PORT_A" --exec "/create Aotearoa"
-await a "invite: kahui1" "A to mint an invite"
+await a "invite: kahui" "A to mint an invite"
 INVITE="$(grep -m1 -o 'kahui1[A-Za-z0-9]*' "$RUN_DIR/a.log")"
 pass "community created, #general opened"
 note "invite ${INVITE:0:32}… (${#INVITE} chars)"
