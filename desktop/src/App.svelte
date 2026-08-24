@@ -62,11 +62,7 @@
     {#if kahui.startupNote}
       <p class="reason">{kahui.startupNote}</p>
     {:else if kahui.waiting >= 8}
-      <p class="reason">
-        This is taking longer than usual. If another copy of Kāhui is open, or the command
-        line client is running, close it — they share one identity and only one can hold it
-        at a time.
-      </p>
+      <p class="reason">Taking longer than usual. Another copy of Kāhui may already be open.</p>
     {/if}
   </div>
 {:else if kahui.phase === "failed"}
@@ -90,8 +86,14 @@
     {/if}
   </main>
 
-  {#if dialog === "add"}
-    <AddCommunityDialog onclose={() => (dialog = null)} />
+  {#if dialog === "add" || kahui.incomingInvite}
+    <AddCommunityDialog
+      prefill={kahui.incomingInvite}
+      onclose={() => {
+        dialog = null;
+        kahui.incomingInvite = "";
+      }}
+    />
   {:else if dialog === "invite"}
     <InviteDialog onclose={() => (dialog = null)} />
   {:else if dialog === "channel"}

@@ -27,11 +27,7 @@
   }
 </script>
 
-<Modal
-  title="New channel"
-  subtitle="Channel names are lowercased, and their identifier is derived from the name. Two members who create the same channel independently end up in the same one."
-  {onclose}
->
+<Modal title="New channel" {onclose}>
   <div class="row">
     <span class="hash">#</span>
     <input

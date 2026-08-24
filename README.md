@@ -124,6 +124,13 @@ Catching up is one round trip: send your frontier, receive what it does not cove
 request is a few dozen bytes per member no matter how much history exists, so it costs
 the same after five minutes offline as after five months.
 
+### Invites are links
+
+An invite is a code (`kahui1…`) or the same thing as a link (`kahui://join/kahui1…`).
+The desktop app registers the `kahui://` scheme, so clicking one opens the app on that
+community — and if it is already running, the link goes to the open window rather than
+starting a second copy. Both forms are accepted anywhere an invite is asked for.
+
 ### Anyone can run it, from anywhere
 
 Most people are behind a home router, which means nothing can dial them. A node in that

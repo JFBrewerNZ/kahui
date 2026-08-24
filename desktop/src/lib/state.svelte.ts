@@ -12,6 +12,7 @@ import {
   asMessage,
   errorText,
   onFailed,
+  onInviteLink,
   onNodeEvent,
   onReady,
   type Ready,
@@ -34,6 +35,8 @@ class Kahui {
   /// Seconds spent starting, so a slow start can say so rather than just sit there.
   waiting = $state(0);
   startupNote = $state("");
+  /// An invite that arrived by link, waiting to be confirmed.
+  incomingInvite = $state("");
 
   status = $state<Status | null>(null);
   dataDir = $state("");
@@ -106,6 +109,11 @@ class Kahui {
         this.fatal = err.message;
       });
       await onNodeEvent((event) => void this.apply(event));
+      await onInviteLink((link) => (this.incomingInvite = link));
+      // A link can be what launched the app, in which case it arrived before
+      // anybody was listening.
+      const waiting = await api.pendingInvite();
+      if (waiting) this.incomingInvite = waiting;
     } catch (err) {
       this.notice = `Live updates are unavailable: ${errorText(err)}`;
     }

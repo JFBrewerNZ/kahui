@@ -16,6 +16,13 @@ use serde::{Deserialize, Serialize};
 /// Prefix that makes an invite recognisable in the middle of a chat log.
 pub const INVITE_PREFIX: &str = "kahui1";
 
+/// URL scheme the desktop app registers, so an invite can be a link somebody
+/// clicks rather than a code they copy.
+pub const LINK_SCHEME: &str = "kahui";
+
+/// What a full invite link looks like: `kahui://join/kahui1...`
+pub const LINK_PREFIX: &str = "kahui://join/";
+
 /// Format version, so future invites can carry more without older clients
 /// misreading them.
 const INVITE_VERSION: u8 = 1;
@@ -82,8 +89,19 @@ impl Invite {
         format!("{INVITE_PREFIX}{}", bs58::encode(bytes).into_string())
     }
 
+    /// The same invite as a clickable link.
+    pub fn to_link(&self) -> String {
+        format!("{LINK_PREFIX}{}", self.encode())
+    }
+
+    /// Reads an invite from a code or a link.
+    ///
+    /// Both forms are accepted because both end up in front of people: a code
+    /// pasted into a chat, and a `kahui://` link clicked in a browser. Asking
+    /// somebody to notice which one they have would be a pointless test.
     pub fn decode(text: &str) -> Result<Self, InviteError> {
         let text = text.trim();
+        let text = text.strip_prefix(LINK_PREFIX).unwrap_or(text);
         let body = text
             .strip_prefix(INVITE_PREFIX)
             .ok_or(InviteError::MissingPrefix)?;
@@ -138,6 +156,15 @@ mod tests {
         let text = invite.encode();
         assert!(text.starts_with(INVITE_PREFIX));
         assert_eq!(Invite::decode(&text).unwrap(), invite);
+    }
+
+    #[test]
+    fn a_link_and_a_code_are_the_same_invite() {
+        let invite = sample();
+        let link = invite.to_link();
+        assert!(link.starts_with("kahui://join/"));
+        assert_eq!(Invite::decode(&link).unwrap(), invite);
+        assert_eq!(Invite::decode(&invite.encode()).unwrap(), invite);
     }
 
     #[test]

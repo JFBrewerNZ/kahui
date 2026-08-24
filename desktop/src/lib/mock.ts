@@ -122,6 +122,7 @@ const previewStatus = (): Status =>
 export const mockApi = {
   startupState: () =>
     wait({ phase: "ready" as const, status: previewStatus(), dataDir: mockDataDir }),
+  pendingInvite: async () => null,
   setWindowTitle: async (title: string) => {
     document.title = title;
   },
@@ -143,6 +144,8 @@ export const mockApi = {
     wait<InviteText>({
       token:
         "kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o4Q9nSATPx7qva2efab5SzXF1rQBQ3y9cB5BnnNP2ZtBwQ5qoMicjTq5nk38RKZ1SySvUq6NcDWSGqdJ9dhZW8MDoBAouVYuW3TNMX9JffeTtNMN6xidiK3P89KhopiSpiLzXA46Mi8AyDGTzgmiVvu7KcAUm3YGZDtvVNTV5xTSjCsypipsYrVQ2BXisWq9oAHmZnJtNvGfTwKBjMytSKeqwtCy4VaJigAUFXJ6Htcf4ANcPW2uYD7bxB2ZkeDE1R4Fz",
+      link:
+        "kahui://join/kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o4Q9nSATPx7qva2efab5SzXF1rQBQ3y9cB5BnnNP2ZtBwQ5qoMicjTq5nk38RKZ1SySvUq6NcDWSGqdJ9dhZW8MDoBAouVYuW3TNMX9JffeTtNMN6xidiK3P89KhopiSpiLzXA46Mi8AyDGTzgmiVvu7KcAUm3YGZDtvVNTV5xTSjCsypipsYrVQ2BXisWq9oAHmZnJtNvGfTwKBjMytSKeqwtCy4VaJigAUFXJ6Htcf4ANcPW2uYD7bxB2ZkeDE1R4Fz",
       communityName: "Aotearoa",
       peerCount: 3,
     }),

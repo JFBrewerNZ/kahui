@@ -29,7 +29,7 @@ pub mod peer;
 pub mod wire;
 
 pub use behaviour::{build_swarm, Behaviour, BehaviourEvent, NetConfig};
-pub use invite::{Invite, InviteError, InvitePeer, INVITE_PREFIX};
+pub use invite::{Invite, InviteError, InvitePeer, INVITE_PREFIX, LINK_PREFIX, LINK_SCHEME};
 pub use peer::{libp2p_keypair, peer_id_of};
 pub use wire::{
     topic_name, GossipMessage, Presence, SyncRequest, SyncResponse, MAX_SYNC_BATCH, SYNC_PROTOCOL,

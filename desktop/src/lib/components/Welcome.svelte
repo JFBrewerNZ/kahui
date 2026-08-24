@@ -13,6 +13,14 @@
   let working = $state(false);
   let problem = $state("");
 
+  // A kahui:// link that opened the app lands here: show it, ready to confirm.
+  $effect(() => {
+    if (!kahui.incomingInvite) return;
+    invite = kahui.incomingInvite;
+    pane = "join";
+    kahui.incomingInvite = "";
+  });
+
   // The generated name is a placeholder, not a choice. Clear it so the field
   // reads as an invitation rather than as something already decided.
   $effect(() => {
@@ -55,7 +63,7 @@
         </g>
       </svg>
       <h1>Kāhui</h1>
-      <p class="sub">Communities hosted by their members. No account, no server.</p>
+      <p class="sub">Communities hosted by their members.</p>
     </header>
 
     {#if pane === "start"}
@@ -77,19 +85,17 @@
         />
       </div>
       <p class="hint faint">
-        You are already signed in — an identity was created on this device the first time
-        Kāhui ran, and it is a key on this machine rather than an account somewhere. Nobody
-        was asked and nobody can revoke it.
+        Your identity is a key on this device. Nothing to sign up for.
       </p>
 
       <div class="choices">
         <button class="choice" disabled={!named} onclick={() => (pane = "create")}>
           <b>Start a community</b>
-          <span>You will be its first member. Nobody else needs to agree.</span>
+          <span>You will be its first member.</span>
         </button>
         <button class="choice" disabled={!named} onclick={() => (pane = "join")}>
           <b>Join with an invite</b>
-          <span>Paste a code somebody sent you.</span>
+          <span>Paste a code or link.</span>
         </button>
       </div>
 
@@ -98,14 +104,11 @@
       {/if}
 
       <button class="restore-link" onclick={() => (pane = "restore")}>
-        Already have a Kāhui key from another device?
+        Use a key from another device
       </button>
     {:else if pane === "create"}
       <h2>Start a community</h2>
-      <p class="hint faint">
-        It begins with a <strong>#general</strong> channel and you in it. Everything said
-        there will be stored by every member, including you.
-      </p>
+      <p class="hint faint">Starts with a <strong>#general</strong> channel.</p>
       <input
         class="field"
         bind:value={community}
@@ -126,15 +129,12 @@
       </div>
     {:else if pane === "join"}
       <h2>Join a community</h2>
-      <p class="hint faint">
-        Your device will fetch the history and check every signature in it before joining.
-        An invite is a hint about where to look, not a password.
-      </p>
+
       <textarea
         class="field code mono"
         rows="4"
         bind:value={invite}
-        placeholder="kahui1…"
+        placeholder="kahui1… or kahui://join/…"
         spellcheck="false"
       ></textarea>
       {#if problem}<p class="problem">{problem}</p>{/if}
@@ -151,9 +151,7 @@
     {:else}
       <h2>Use an existing key</h2>
       <p class="hint faint">
-        This is how you are the same person on two machines, or come back after losing one.
-        It replaces the identity this device made for itself, which is only possible while
-        it has not joined anything yet.
+        Be the same person on another device. Only works before you have joined anything.
       </p>
       <textarea
         class="field code mono"

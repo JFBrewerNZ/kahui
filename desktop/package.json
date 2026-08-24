@@ -13,7 +13,8 @@
     "check:ipc": "node scripts/check-ipc.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.9.0"
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.9"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.1",

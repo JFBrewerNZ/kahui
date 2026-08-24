@@ -27,6 +27,8 @@ const NODE_EVENT: &str = "kahui://event";
 const READY_EVENT: &str = "kahui://ready";
 /// Fired if the node could not start at all.
 const FAILED_EVENT: &str = "kahui://failed";
+/// Fired when the app is opened by a `kahui://join/...` link.
+const INVITE_EVENT: &str = "kahui://invite";
 
 /// How many messages the window asks for when opening a channel.
 const HISTORY_LIMIT: usize = 300;
@@ -94,6 +96,8 @@ pub enum Startup {
 pub struct NodeState {
     handle: RwLock<Option<NodeHandle>>,
     startup: RwLock<Startup>,
+    /// An invite link the app was launched with, held until the window asks.
+    pending_invite: RwLock<Option<String>>,
 }
 
 impl NodeState {
@@ -214,6 +218,15 @@ async fn set_window_title(title: String, app: AppHandle) -> Result<(), UiError> 
             .map_err(|err| UiError::new(err.to_string()))?;
     }
     Ok(())
+}
+
+/// The link this app was opened with, if it was opened by one.
+///
+/// Like startup, an arriving link can beat the window to it, so it is recorded
+/// as well as announced.
+#[tauri::command]
+async fn pending_invite(state: State<'_, NodeState>) -> Result<Option<String>, UiError> {
+    Ok(state.pending_invite.write().await.take())
 }
 
 /// Where the node has got to, asked rather than awaited.
@@ -367,7 +380,10 @@ async fn create_channel(
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InviteText {
+    /// The bare code, for pasting into a box.
     pub token: String,
+    /// The same thing as a `kahui://` link, for clicking.
+    pub link: String,
     pub community_name: String,
     /// How many members are named in it. More than one means the invite keeps
     /// working after any of them goes offline.
@@ -382,6 +398,7 @@ async fn make_invite(
     let invite = state.get().await?.invite(community).await?;
     Ok(InviteText {
         token: invite.encode(),
+        link: invite.to_link(),
         community_name: invite.name.clone(),
         peer_count: invite.peers.len(),
     })
@@ -419,9 +436,25 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        // One node per data directory, so one window. Launching again — by
+        // clicking a kahui:// link, or the icon — hands whatever was on the
+        // command line to the copy that is already running and raises it,
+        // rather than starting a second one that cannot open the database.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            if let Some(link) = argv.iter().find(|arg| arg.starts_with("kahui://")) {
+                tracing::info!(%link, "a link arrived for the running window");
+                let _ = app.emit(INVITE_EVENT, link.clone());
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .manage(NodeState::default())
         .invoke_handler(tauri::generate_handler![
             startup_state,
+            pending_invite,
             set_window_title,
             report_web_error,
             backup_phrase,
@@ -456,6 +489,32 @@ pub fn run() {
             );
         })
         .setup(|app| {
+            // Claim kahui:// so an invite can be a link somebody clicks. An
+            // installer does this too; doing it here as well means a copy run
+            // straight from a folder works the same way.
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(err) = app.deep_link().register_all() {
+                    tracing::debug!(%err, "could not claim the kahui:// scheme");
+                }
+
+                let opener = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        tracing::info!(%url, "opened by a link");
+                        let link = url.to_string();
+                        let recorded = opener.clone();
+                        let stored = link.clone();
+                        tauri::async_runtime::spawn(async move {
+                            *recorded.state::<NodeState>().pending_invite.write().await =
+                                Some(stored);
+                        });
+                        let _ = opener.emit(INVITE_EVENT, link);
+                    }
+                });
+            }
+
             // Starting the node takes a moment (opening the database, binding
             // sockets), so the window paints first and is told when it is ready.
             let handle = app.handle().clone();

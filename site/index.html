@@ -165,15 +165,14 @@
 
 <p class="pitch">
   An open-source alternative to Discord where communities are hosted by
-  <strong>their members</strong>, not by a company. When you join a Kāhui server, your
-  device becomes part of that community's network — members collectively store the
-  history and keep the server alive. There is no central database, no login server, and
-  nothing to sign up for.
+  <strong>their members</strong>. Join one and your device becomes part of its network,
+  storing the history and serving it to everyone else. No central database, no login
+  server, nothing to sign up for.
 </p>
 
 <p class="pitch">
-  If this project, its website and its developers disappeared tomorrow, existing
-  communities would keep running.
+  If this project and its developers disappeared tomorrow, existing communities would
+  keep running.
 </p>
 
 <h2>Download</h2>
@@ -190,17 +189,14 @@
 </div>
 
 <p class="fineprint">
-  No account, and nothing to sign up for. Windows and macOS will warn that the download is
-  unsigned — the project has no code-signing certificate, because buying one would put a
-  company between you and the software. Checksums are published with every release.
+  Windows and macOS will warn that the download is unsigned. There is no code-signing
+  certificate, because buying one would put a company between you and the software.
+  Checksums ship with every release.
   <br /><br />
-  The Linux AppImage carries its own copy of the system webview, which is most of its size.
-  On Debian or Ubuntu the <code>.deb</code> is a tenth of that and uses the one you already
-  have.
-  <br /><br />
-  Running a server, or prefer a terminal? Every release also ships a
-  <a href="https://github.com/JFBrewerNZ/kahui/releases/latest">single-binary command line
-  client</a> with no window at all — about 6 MB, and statically linked.
+  On Debian or Ubuntu, prefer the <code>.deb</code> — the AppImage bundles its own webview
+  and is ten times the size. There is also a
+  <a href="https://github.com/JFBrewerNZ/kahui/releases/latest">command line client</a>
+  for servers: one static binary, about 6 MB.
 </p>
 
 <h2>Two minutes</h2>
@@ -217,8 +213,9 @@ invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
 </pre>
 
 <p class="fineprint">
-  That invite is the only bootstrap step in the system. It is a hint about where to look,
-  not a credential — everything it points at is verified against signatures once fetched.
+  Invites also work as <code>kahui://</code> links: click one and the app opens on it.
+  An invite is a hint about where to look, not a credential — everything it points at is
+  checked against signatures once fetched.
 </p>
 
 <h2>How it works</h2>
@@ -226,32 +223,32 @@ invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
 <ul class="how">
   <li>
     <b>A community is a log of signed events.</b> Every message, channel and join is one
-    event, signed with a key that never leaves your machine. Because each event proves its
-    own authorship, your node can accept history from any peer without trusting that peer
-    — which is what removes the server, rather than relocating it.
+    event, signed with a key that never leaves your machine. Each event proves its own
+    authorship, so your node can accept history from any peer without trusting it. That is
+    what removes the server rather than relocating it.
   </li>
   <li>
-    <b>Catching up costs one round trip.</b> Each member's events form a numbered chain,
-    so "everything I have from Alice" is a single number. Send that, receive what it does
-    not cover. It costs the same after five months offline as after five minutes.
+    <b>Catching up costs one round trip.</b> Each member's events form a numbered chain, so
+    "everything I have from Alice" is one number. Send it, receive the rest. Costs the same
+    after five months offline as after five minutes.
   </li>
   <li>
-    <b>Nobody is load-bearing, including the founder.</b> Members tell each other where
-    they are, so the network fills in to a mesh within seconds of you joining. Close the
-    laptop that created the community and everyone else keeps talking.
+    <b>Nobody is load-bearing, including the founder.</b> Members tell each other where they
+    are, and the network meshes within seconds of you joining. Close the laptop that created
+    the community and everyone else keeps talking.
   </li>
 </ul>
 
 <h2>Where it is up to</h2>
 
 <div class="note">
-  <b>Milestone 2: a working desktop app.</b> The protocol, storage, networking and sync are
-  real, tested, and do everything described above, and there is now a window as well as a
-  command line client. No voice, roles or moderation yet. Nodes behind strict home routers
-  cannot reach each other across the internet yet — relay support is next. The
+  <b>Milestone 4: reachable from anywhere.</b> Protocol, storage, networking and sync are
+  real and tested, with a desktop app and a command line client. Members behind home routers
+  reach each other by relaying through members who can be dialled. No voice, roles or
+  moderation yet. The
   <a href="https://github.com/JFBrewerNZ/kahui/blob/main/docs/architecture.md">architecture
-  notes</a> list every known limitation plainly, because a decentralised system that
-  overstates its guarantees is worse than a centralised one that does not.
+  notes</a> list every known limitation plainly — a decentralised system that overstates its
+  guarantees is worse than a centralised one that does not.
 </div>
 
 <footer>

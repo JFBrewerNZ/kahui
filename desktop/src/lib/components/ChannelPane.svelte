@@ -39,10 +39,7 @@
     {/each}
 
     {#if kahui.communities.length === 0}
-      <p class="empty muted">
-        No communities yet. Use <strong>+</strong> on the left to create one, or paste an invite
-        someone sent you.
-      </p>
+      <p class="empty muted">No communities yet.</p>
     {/if}
   </div>
 

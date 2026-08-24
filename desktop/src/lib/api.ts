@@ -74,6 +74,7 @@ export interface Status {
 
 export interface InviteText {
   token: string;
+  link: string;
   communityName: string;
   peerCount: number;
 }
@@ -148,6 +149,7 @@ const insideTauri = () =>
 
 const realApi = {
   startupState: () => invoke<Startup>("startup_state"),
+  pendingInvite: () => invoke<string | null>("pending_invite"),
   setWindowTitle: (title: string) => invoke<void>("set_window_title", { title }),
   backupPhrase: () => invoke<string>("backup_phrase"),
   restoreIdentity: (phrase: string) => invoke<void>("restore_identity", { phrase }),
@@ -194,3 +196,9 @@ export const onReady = preview
   : realOnReady;
 
 export const onFailed = preview ? async (_h: (err: UiError) => void) => () => {} : realOnFailed;
+
+/// Fired when a `kahui://join/...` link opens the app.
+export const onInviteLink = preview
+  ? async (_h: (link: string) => void) => () => {}
+  : (handler: (link: string) => void) =>
+      listen<string>("kahui://invite", (e) => handler(e.payload));

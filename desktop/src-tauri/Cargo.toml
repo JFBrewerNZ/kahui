@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 kahui-node.workspace = true
 kahui-proto.workspace = true
 tauri = { version = "2", features = [] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

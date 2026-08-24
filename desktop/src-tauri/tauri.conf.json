@@ -37,5 +37,14 @@
     ],
     "shortDescription": "A Discord alternative hosted by its members",
     "longDescription": "Kahui is an open-source, decentralised alternative to Discord. Communities are hosted by their members, not by a company: there is no central database, no login server, and nothing to sign up for."
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "kahui"
+        ]
+      }
+    }
   }
 }

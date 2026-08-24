@@ -53,7 +53,7 @@
 
 <Modal
   title="You"
-  subtitle="Your identity is a keypair on this machine. There is no account and no password — copying the data directory copies the identity with it."
+  subtitle="No account. Your identity is a key on this device."
   {onclose}
 >
   <label class="label" for="display-name">Display name</label>
@@ -64,9 +64,7 @@
     maxlength="64"
     onkeydown={(e) => e.key === "Enter" && save()}
   />
-  <p class="hint faint">
-    Changing it writes a signed event, so every member sees the new name once it reaches them.
-  </p>
+
 
   <dl>
     <dt>Your id</dt>
@@ -108,16 +106,9 @@
     {#if keyShown}
       <textarea class="field code mono" readonly rows="2" value={key} onclick={(e) => e.currentTarget.select()}
       ></textarea>
-      <p class="warn">
-        Anyone holding this can post as you, in every community, forever. There is no
-        server to revoke it at. Keep it somewhere only you can reach.
-      </p>
+      <p class="warn">Anyone with this can post as you. Keep it private.</p>
     {:else}
-      <p class="faint keyhint">
-        Your identity is a key on this machine, not an account. Back it up and you can be
-        the same person on another device, or come back after losing this one. Lose it with
-        no copy and that identity is gone — nobody can reissue it.
-      </p>
+      <p class="faint keyhint">Back this up. Lose it and the identity is gone for good.</p>
       <button class="btn" onclick={revealKey}>Show my key</button>
     {/if}
   </section>
@@ -141,12 +132,6 @@
     text-transform: uppercase;
     color: var(--faint);
     margin-bottom: 0.35rem;
-  }
-
-  .hint {
-    font-size: 0.82rem;
-    margin: 0.5rem 0 0;
-    line-height: 1.5;
   }
 
   dl {

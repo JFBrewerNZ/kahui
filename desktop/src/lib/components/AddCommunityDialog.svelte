@@ -5,12 +5,19 @@
 
   interface Props {
     onclose: () => void;
+    /// An invite that arrived by link, ready to confirm.
+    prefill?: string;
   }
-  let { onclose }: Props = $props();
+  let { onclose, prefill = "" }: Props = $props();
 
   let tab = $state<"join" | "create">("join");
   let name = $state("");
   let invite = $state("");
+
+  // Filled in when a kahui:// link opened this dialog.
+  $effect(() => {
+    if (prefill) invite = prefill;
+  });
   let working = $state(false);
   let problem = $state("");
 
@@ -35,9 +42,7 @@
 
 <Modal
   title={tab === "join" ? "Join a community" : "Create a community"}
-  subtitle={tab === "join"
-    ? "Paste an invite someone sent you. Your node will fetch the history and check every signature in it."
-    : "You will be its first member. Nobody else needs to agree, and no service is contacted."}
+  subtitle={tab === "join" ? "Paste a code or link." : "You will be its first member."}
   {onclose}
 >
   <div class="tabs">
@@ -61,9 +66,7 @@
       maxlength="64"
       onkeydown={(e) => e.key === "Enter" && go()}
     />
-    <p class="hint faint">
-      It will start with a <strong>#general</strong> channel. You can invite people once it exists.
-    </p>
+    <p class="hint faint">Starts with a <strong>#general</strong> channel.</p>
   {/if}
 
   {#if problem}<p class="problem">{problem}</p>{/if}

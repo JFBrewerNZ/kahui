@@ -86,10 +86,7 @@
     {#if kahui.channel && kahui.messages.length === 0}
       <div class="opening">
         <h3>#{kahui.channel.name}</h3>
-        <p class="muted">
-          This is the beginning of the channel. Everything said here is signed by whoever said it
-          and stored by every member — including you.
-        </p>
+        <p class="muted">The start of the channel.</p>
       </div>
     {/if}
 

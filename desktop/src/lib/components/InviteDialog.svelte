@@ -25,41 +25,27 @@
   async function copy() {
     if (!invite) return;
     try {
-      await navigator.clipboard.writeText(invite.token);
+      await navigator.clipboard.writeText(invite.link);
       copied = true;
       setTimeout(() => (copied = false), 1800);
     } catch {
-      // Clipboard access can be refused. Selecting the text is a fine
-      // fallback -- the user presses Ctrl-C themselves.
+      // Clipboard access can be refused. Select it so Ctrl-C still works.
       box?.select();
-      problem = "Could not reach the clipboard. The invite is selected — copy it yourself.";
+      problem = "Copy it yourself — it is selected.";
     }
   }
 </script>
 
-<Modal
-  title="Invite to {invite?.communityName ?? kahui.community?.name ?? 'this community'}"
-  subtitle="Send this to whoever should join. It is a hint about where to find the community, not a password — everything it points at is checked against signatures once fetched."
-  {onclose}
->
+<Modal title="Invite to {invite?.communityName ?? kahui.community?.name ?? 'this community'}" {onclose}>
   {#if invite}
     <textarea
-      class="field token mono"
+      class="field link mono"
       bind:this={box}
       readonly
-      rows="5"
-      value={invite.token}
+      rows="3"
+      value={invite.link}
       onclick={() => box?.select()}
     ></textarea>
-
-    <p class="hint faint">
-      {#if invite.peerCount > 1}
-        Names {invite.peerCount} members, so it keeps working even if you go offline.
-      {:else}
-        Names only this node so far. Once others join, new invites will name them too and will
-        keep working when you are away.
-      {/if}
-    </p>
   {:else if problem}
     <p class="problem">{problem}</p>
   {:else}
@@ -69,26 +55,21 @@
   <div class="actions">
     <button class="btn" onclick={onclose}>Done</button>
     <button class="btn primary" onclick={copy} disabled={!invite}>
-      {copied ? "Copied" : "Copy invite"}
+      {copied ? "Copied" : "Copy"}
     </button>
   </div>
 </Modal>
 
 <style>
-  .token {
+  .link {
     resize: none;
     font-size: 0.78rem;
     line-height: 1.55;
     word-break: break-all;
     color: var(--star);
   }
-  .hint {
-    font-size: 0.83rem;
-    margin: 0.7rem 0 0;
-    line-height: 1.55;
-  }
   .problem {
-    margin: 0.8rem 0 0;
+    margin: 0;
     font-size: 0.85rem;
     color: var(--danger);
   }
