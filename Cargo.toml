@@ -21,7 +21,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.85"
 # AGPL, deliberately. Kahui exists so that communities are not captured by
@@ -33,10 +33,10 @@ repository = "https://github.com/JFBrewerNZ/kahui"
 authors = ["The Kahui Contributors"]
 
 [workspace.dependencies]
-kahui-proto = { path = "crates/kahui-proto", version = "0.5.1" }
-kahui-store = { path = "crates/kahui-store", version = "0.5.1" }
-kahui-net   = { path = "crates/kahui-net",   version = "0.5.1" }
-kahui-node  = { path = "crates/kahui-node",  version = "0.5.1" }
+kahui-proto = { path = "crates/kahui-proto", version = "0.6.0" }
+kahui-store = { path = "crates/kahui-store", version = "0.6.0" }
+kahui-net   = { path = "crates/kahui-net",   version = "0.6.0" }
+kahui-node  = { path = "crates/kahui-node",  version = "0.6.0" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
