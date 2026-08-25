@@ -65,18 +65,19 @@ On the droplet:
 ```bash
 # Grab the static Linux build — no glibc version to worry about.
 # Check https://github.com/JFBrewerNZ/kahui/releases/latest for the current one.
-VERSION=0.6.0
+VERSION=0.7.0
 curl -LO https://github.com/JFBrewerNZ/kahui/releases/download/v$VERSION/kahui-$VERSION-x86_64-unknown-linux-musl.tar.gz
 tar xzf kahui-$VERSION-x86_64-unknown-linux-musl.tar.gz
 cd kahui-$VERSION-x86_64-unknown-linux-musl
 chmod +x kahui
 
-# Kahui speaks TCP and QUIC on the same port number.
+# Kahui speaks TCP and QUIC on the same port number, 4001 by default.
 sudo ufw allow 4001/tcp
 sudo ufw allow 4001/udp
 
 # mDNS finds nothing useful on a cloud VM and chatters pointlessly, so turn it off.
-./kahui --data-dir ~/.kahui --name droplet --port 4001 --no-mdns
+# There is no router in front of a droplet, so there is nothing to ask for a port.
+./kahui --data-dir ~/.kahui --name droplet --no-mdns --no-port-map
 ```
 
 Then, at the prompt:
@@ -90,7 +91,7 @@ It prints an invite. Copy it.
 ## Connect from your own machine
 
 ```
-kahui --data-dir ./me --name jamon --port 4001
+kahui --data-dir ./me --name jamon
 > /join kahui1XEcg4xA41QNfJis19rY…
 > kia ora from the laptop
 ```
@@ -109,7 +110,7 @@ everything it missed.
 
 ```bash
 tmux new -s kahui
-./kahui --data-dir ~/.kahui --name droplet --port 4001 --no-mdns
+./kahui --data-dir ~/.kahui --name droplet --no-mdns --no-port-map
 # Ctrl-B then D to detach; `tmux attach -t kahui` to come back
 ```
 
@@ -124,7 +125,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=kahui
-ExecStart=/opt/kahui/kahui --data-dir /var/lib/kahui --name droplet --port 4001 --no-mdns
+ExecStart=/opt/kahui/kahui --data-dir /var/lib/kahui --name droplet --no-mdns --no-port-map
 Restart=always
 RestartSec=5
 
