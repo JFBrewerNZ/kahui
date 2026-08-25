@@ -243,9 +243,12 @@ invite: kahui1XEcg4xA41QNfJis19rYRdWU6SPqQuN1dGbfR1HAq3o…
 
 <div class="note">
   <b>Milestone 4: reachable from anywhere.</b> Protocol, storage, networking and sync are
-  real and tested, with a desktop app and a command line client. Members behind home routers
-  reach each other by relaying through members who can be dialled. No voice, roles or
-  moderation yet. The
+  real and tested, with a desktop app and a command line client. A node asks the router to
+  open a port three ways and listens on IPv6, and where none of that works it relays through
+  a member who can be dialled.
+  <a href="https://github.com/JFBrewerNZ/kahui/blob/main/docs/hosting-from-home.md">Hosting
+  from home</a> covers what to do when a router refuses. No voice, roles or moderation yet.
+  The
   <a href="https://github.com/JFBrewerNZ/kahui/blob/main/docs/architecture.md">architecture
   notes</a> list every known limitation plainly — a decentralised system that overstates its
   guarantees is worse than a centralised one that does not.

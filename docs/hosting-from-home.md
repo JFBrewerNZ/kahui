@@ -41,9 +41,10 @@ succeeding is enough.
 
 ## When none of it works
 
-Some routers refuse every method. Mine does: it ignores PCP and NAT-PMP entirely,
-and the only device on the network answering UPnP searches turns out not to be the
-router at all. There is no software fix for that from the inside.
+Some routers refuse every method. The one this was developed against does: it
+ignores PCP and NAT-PMP entirely, and the only device on the network answering a
+UPnP search turns out not to be the router at all. There is no software fix for
+that from the inside.
 
 Two things still work.
 
