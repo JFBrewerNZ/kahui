@@ -27,9 +27,14 @@ most likely to be doing the carrying.
 
 ## Either end can host
 
-A laptop behind a home router can create a community other people join. It needs to have
-met one reachable node, once — after that the node is remembered, across restarts and
-across every community, and the laptop is relayed before a community even exists.
+A laptop behind a home router can create a community other people join. Often it needs
+nothing at all: run `kahui doctor`, and if the router opened a port or the connection has
+a public IPv6 address, it is already reachable and a droplet adds nothing. See
+[hosting from home](hosting-from-home.md).
+
+Where the router refuses everything, the laptop needs to have met one reachable node,
+once — after that the node is remembered, across restarts and across every community, and
+the laptop is relayed before a community even exists.
 
 If you have a droplet, that reachable node is the droplet. Connect to it once:
 

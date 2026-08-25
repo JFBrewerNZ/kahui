@@ -182,13 +182,34 @@ read and post, unable to serve history to anybody. A network of spectators does 
 because serving history is the half of the bargain that keeps a community alive when its
 other members go offline.
 
-Three protocols fix that, and none of them is a service:
+Several protocols fix that, and none of them is a service:
 
-**UPnP** is tried first, because it is the best outcome available: the node asks the home
-router to forward a port, and if it agrees the node is simply reachable — no relay, no hole
-punch, nobody else involved at all. Most consumer routers support it and have it on. When
-that fails, and it often will, the rest of this section is the fallback rather than the
-plan.
+**Being reachable outright** is tried first, because it is the best outcome available: no
+relay, no hole punch, nobody else involved at all. Two things can deliver it.
+
+A node listens on IPv6 as well as IPv4. A connection with a globally routable IPv6 address
+usually has no NAT in front of it, so there is nothing to traverse and nothing to configure
+— easily the cheapest win available, and one that grows more common every year.
+
+Otherwise the node asks the router to open a port, three different ways. **PCP** (RFC 6887)
+and **NAT-PMP** (RFC 6886) share a port on the gateway and are tried together; **UPnP-IGD**
+is tried separately. Support is a lottery — firmware ships with one implemented, one
+half-implemented and one switched off — so all three get asked and any one succeeding is
+enough.
+
+Two details are worth stating because getting them wrong looks identical to a router that
+simply refuses. The UPnP attempt asks the *default gateway* directly before falling back to
+a multicast search, since the first device to answer such a search need not be the router:
+a NAS or set-top box may advertise the same service and then refuse everything. And a
+mapping request that is turned down for its lease duration is retried as a permanent one,
+because a good many routers implement only permanent mappings and answer `501 Action
+Failed` to anything else.
+
+The listen port is fixed rather than OS-assigned for a related reason: a port forwarded by
+hand is only useful if it is the same port next time.
+
+`kahui doctor` reports what each protocol answered. When all of it fails, and it sometimes
+will, the rest of this section is the fallback rather than the plan.
 
 **AutoNAT** answers the one question a node genuinely cannot answer alone. Sending a packet
 proves nothing about whether anybody can send one back, so the node asks peers to dial it
@@ -387,11 +408,14 @@ than a centralised one that does not.
 beginning each round — fine for thousands of events, not for millions. Presence is O(members).
 None of this is a problem at community scale; all of it needs work before it is a problem.
 
-**Reachability.** Relay and hole punching are built (§5b), so a community works as long as
-one of its members can be dialled. If literally every member is behind carrier-grade NAT
-there is nothing to relay through, and no fallback to anybody else's relay is provided on
-purpose. There is still no DHT: members find each other from an invite plus presence,
-which suits a community and will not find arbitrary peers on the open internet.
+**Reachability.** Port mapping, relay and hole punching are built (§5b), so a community
+works as long as one of its members can be dialled. Routers that refuse PCP, NAT-PMP and
+UPnP alike do exist — the network this was developed on has one — and there the port must
+be forwarded by hand or a reachable member found. If literally every member is behind
+carrier-grade NAT there is nothing to relay through, and no fallback to anybody else's
+relay is provided on purpose. There is still no DHT: members find each other from an invite
+plus presence, which suits a community and will not find arbitrary peers on the open
+internet.
 
 **Off-grid.** The data model is delay-tolerant, and a message provably crosses a chain of
 members who were never online together. The transports for a genuinely disconnected mesh
