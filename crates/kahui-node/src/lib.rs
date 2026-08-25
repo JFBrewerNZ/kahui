@@ -52,7 +52,10 @@ pub use api::{
     CommunityStatus, Message, NodeEvent, NodeHandle, Reachability, Status, DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_JOIN_TIMEOUT,
 };
-pub use kahui_net::{Invite, InviteError, InvitePeer, NetConfig, NetError};
+pub use kahui_net::{
+    diagnose, Attempt, Diagnosis, Invite, InviteError, InvitePeer, NetConfig, NetError,
+    DEFAULT_PORT,
+};
 pub use kahui_proto::{ChannelId, EventId, UserId};
 pub use kahui_store::{ChannelSummary, CommunitySummary, MemberSummary};
 

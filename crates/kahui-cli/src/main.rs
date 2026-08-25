@@ -17,7 +17,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kahui_node::{NetConfig, Node, NodeConfig, Reachability};
-use libp2p::Multiaddr;
 use tracing_subscriber::EnvFilter;
 
 /// Directory used when neither `--data-dir` nor `KAHUI_DATA_DIR` is set.
@@ -53,9 +52,10 @@ struct Cli {
 
     /// Port to listen on. Zero lets the operating system choose.
     ///
-    /// A fixed port makes a node easier for peers to find again after a
-    /// restart, and is worth setting on a machine that others dial into.
-    #[arg(long, default_value_t = 0, global = true)]
+    /// The default is fixed rather than random on purpose: a forwarded port is
+    /// only useful if it is the same one next time. Zero is for running a second
+    /// node on a machine that already has one.
+    #[arg(long, default_value_t = kahui_net::DEFAULT_PORT, global = true)]
     port: u16,
 
     /// Turn off local network discovery.
@@ -73,11 +73,11 @@ struct Cli {
 
     /// Do not ask the router to forward a port.
     ///
-    /// UPnP is the cheapest way to become reachable, and there is no downside
+    /// Asking is the cheapest way to become reachable, and there is no downside
     /// beyond the request itself. Worth turning off only where the network
     /// administrator would rather you did not.
-    #[arg(long, global = true)]
-    no_upnp: bool,
+    #[arg(long, alias = "no-upnp", global = true)]
+    no_port_map: bool,
 
     /// Treat private addresses as real ones.
     ///
@@ -151,6 +151,8 @@ enum Command {
         /// A `kahui1…` code or a `kahui://join/…` link.
         invite: String,
     },
+    /// Check whether people can reach this machine, and say what to change.
+    Doctor,
 }
 
 impl Cli {
@@ -159,21 +161,15 @@ impl Cli {
     }
 
     fn net_config(&self) -> Result<NetConfig> {
-        // Listening on both transports costs nothing and means a peer blocked
-        // from one still has a way in.
-        let listen = vec![
-            format!("/ip4/0.0.0.0/tcp/{}", self.port)
-                .parse::<Multiaddr>()
-                .context("building the TCP listen address")?,
-            format!("/ip4/0.0.0.0/udp/{}/quic-v1", self.port)
-                .parse::<Multiaddr>()
-                .context("building the QUIC listen address")?,
-        ];
+        // Both transports, and both IP versions. Costs nothing, and a peer
+        // blocked from one still has a way in — IPv6 in particular often has no
+        // NAT in front of it, which makes it the easiest path of the four.
+        let listen = kahui_net::default_listen_addrs(self.port);
         Ok(NetConfig {
             listen,
             enable_mdns: !self.no_mdns,
             enable_relay: !self.no_relay,
-            enable_upnp: !self.no_upnp,
+            enable_port_mapping: !self.no_port_map,
             lan_reachable: self.lan,
             ..NetConfig::default()
         })
@@ -216,6 +212,51 @@ async fn main() -> Result<()> {
                 println!("peer id : {}", node.peer_id());
                 println!("data dir: {}", data_dir.display());
             }
+            node.shutdown().await.ok();
+            Ok(())
+        }
+        Some(Command::Doctor) => {
+            // The port actually bound, which is not always the one asked for:
+            // a second node on one machine falls back to an OS-assigned one,
+            // and reporting the wrong number would send somebody off to write
+            // a firewall rule that does nothing.
+            let port = node
+                .status()
+                .await
+                .ok()
+                .and_then(|status| {
+                    status.listen_addrs.iter().find_map(|addr| {
+                        addr.rsplit("/tcp/")
+                            .next()
+                            .and_then(|t| t.parse::<u16>().ok())
+                    })
+                })
+                .unwrap_or(cli.port);
+            println!("checking… (a few seconds)\n");
+            let d = kahui_net::diagnose(port).await;
+
+            let row = |label: &str, value: &str| println!("{label:<9} {value}");
+            row("router", d.gateway.as_deref().unwrap_or("not found"));
+            row("this pc", d.local.as_deref().unwrap_or("no address"));
+            row("port", &port.to_string());
+            println!();
+
+            let outcome = |a: &kahui_net::Attempt| {
+                format!("{} — {}", if a.worked() { "yes" } else { "no" }, a.detail())
+            };
+            row("PCP", &outcome(&d.pcp));
+            row("NAT-PMP", &outcome(&d.natpmp));
+            row("UPnP", &outcome(&d.upnp));
+            row(
+                "IPv6",
+                &if d.global_ipv6.is_empty() {
+                    "no public address".to_string()
+                } else {
+                    d.global_ipv6.join(", ")
+                },
+            );
+
+            println!("\n{}", d.advice());
             node.shutdown().await.ok();
             Ok(())
         }

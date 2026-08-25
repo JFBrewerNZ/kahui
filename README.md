@@ -144,9 +144,14 @@ resulting address alongside its direct ones. The moment a relayed connection exi
 [DCUtR](https://libp2p.io/docs/dcutr/) uses it to coordinate a hole punch, and the relay
 drops out of the path.
 
-Before any of that, the node asks the home router to forward a port over UPnP. When the
-router agrees — most consumer routers do — there is no relay and no hole punch, just a
-reachable node. The rest is the fallback.
+Before any of that, the node tries to be reachable on its own account. It listens on IPv6
+as well as IPv4 — a connection with a public IPv6 address usually has no NAT in front of it
+at all — and asks the router to open a port three different ways: PCP, NAT-PMP and
+UPnP-IGD. Router support is a lottery, and one that refuses one protocol often accepts
+another, so all three get asked. When any of them works there is no relay and no hole
+punch, just a reachable node. The rest is the fallback.
+
+`kahui doctor` reports which of those worked, and what to change if none did.
 
 The relay is a member of the community, not a service. Nothing is configured, nothing is
 hosted, and the node doing the carrying is running exactly the same binary as everyone
@@ -156,14 +161,19 @@ else. One reachable member is enough for a community of people who are not.
 
 | Two people, both at home, no server anywhere | Result |
 |---|---|
-| Either router allows UPnP | ✅ that node is reachable; the other dials it |
-| Neither allows UPnP, but one can forward a port by hand | ✅ same |
+| Either has a public IPv6 address | ✅ dialled directly, nothing to configure |
+| Either router accepts PCP, NAT-PMP or UPnP | ✅ that node is reachable; the other dials it |
+| Neither does, but one forwards port 4001 by hand | ✅ same, and it survives restarts |
 | Neither, but a third member is reachable | ✅ relayed, then usually hole punched |
 | Neither, no third member, both behind carrier-grade NAT | ❌ nothing to build a path out of |
 
-The last row is the honest limit, and it is why a node on a cheap VPS is still worth having
-in a community — not as a server, but as the member most likely to be reachable. See
-[running on a server](docs/running-on-a-server.md).
+The last row is the honest limit. It is not particular to Kāhui: two machines that can only
+make outbound connections have nowhere to meet, which is why every peer-to-peer system ships
+either bootstrap nodes or relays. Kāhui's answer is that the reachable participant should be
+another member rather than us — and forwarding one port makes you that member.
+
+See [hosting from home](docs/hosting-from-home.md), or
+[running on a server](docs/running-on-a-server.md) if you would rather a VPS did it.
 
 **A household where one device has a connection and the others do not** works today, and
 not by routing: the connected device is an ordinary member that happens to hold the

@@ -26,11 +26,18 @@
 pub mod behaviour;
 pub mod invite;
 pub mod peer;
+pub mod portmap;
 pub mod wire;
 
-pub use behaviour::{build_swarm, Behaviour, BehaviourEvent, NetConfig};
-pub use invite::{Invite, InviteError, InvitePeer, INVITE_PREFIX, LINK_PREFIX, LINK_SCHEME};
+pub use behaviour::{
+    build_swarm, default_listen_addrs, Behaviour, BehaviourEvent, NetConfig, DEFAULT_PORT,
+};
+pub use invite::{
+    addr_is_reachable_beyond_lan, Invite, InviteError, InvitePeer, INVITE_PREFIX, LINK_PREFIX,
+    LINK_SCHEME,
+};
 pub use peer::{libp2p_keypair, peer_id_of};
+pub use portmap::{diagnose, keep_open, Attempt, Diagnosis, MapProtocol, PortMapUpdate};
 pub use wire::{
     topic_name, GossipMessage, Presence, SyncRequest, SyncResponse, MAX_SYNC_BATCH, SYNC_PROTOCOL,
 };

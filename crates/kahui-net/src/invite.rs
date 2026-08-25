@@ -152,7 +152,14 @@ impl Invite {
 /// Deliberately textual: an invite carries addresses as strings, and parsing
 /// them into a `Multiaddr` just to look at the first component would make this
 /// crate's simplest type depend on libp2p's.
-fn addr_is_global(addr: &str) -> bool {
+/// Whether a single address could be dialled from outside the local network.
+///
+/// Takes a `Multiaddr` rather than a string, for callers that already have one.
+pub fn addr_is_reachable_beyond_lan(addr: &libp2p::Multiaddr) -> bool {
+    addr_is_global(&addr.to_string())
+}
+
+pub(crate) fn addr_is_global(addr: &str) -> bool {
     addr.split('/')
         .filter_map(|part| part.parse::<std::net::IpAddr>().ok())
         .any(|ip| match ip {
@@ -167,7 +174,13 @@ fn addr_is_global(addr: &str) -> bool {
                     || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1])))
             }
             std::net::IpAddr::V6(v6) => {
-                !(v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00)
+                !(v6.is_loopback()
+                    || v6.is_unspecified()
+                    // fc00::/7, the IPv6 equivalent of 192.168.x.x. Windows
+                    // hands these out readily, so this is the common case.
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    // fe80::/10, which is meaningless off the local link.
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80)
             }
         })
 }
@@ -175,6 +188,21 @@ fn addr_is_global(addr: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_globally_routable_ipv6_counts() {
+        // A machine can easily hold four IPv6 addresses and be reachable at
+        // none of them, which is exactly the case on the network this was
+        // written on.
+        assert!(addr_is_global("/ip6/2404:4408:1234::1/tcp/4001"));
+        // fc00::/7 — private, the IPv6 equivalent of 192.168.x.x.
+        assert!(!addr_is_global(
+            "/ip6/fddd:7047:7de2:428c:d301:add8:8933:f072/tcp/4001"
+        ));
+        // fe80::/10 — link-local, meaningless one hop away.
+        assert!(!addr_is_global("/ip6/fe80::8f62:f8f0:9a56:e8ca/tcp/4001"));
+        assert!(!addr_is_global("/ip6/::1/tcp/4001"));
+    }
 
     fn sample() -> Invite {
         Invite::new(

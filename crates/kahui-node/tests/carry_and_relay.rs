@@ -63,7 +63,7 @@ async fn spawn_with(
             heartbeat: Duration::from_millis(300),
             enable_relay: true,
             // No router to ask in a test, and the search would only time out.
-            enable_upnp: false,
+            enable_port_mapping: false,
             lan_reachable: false,
         },
         presence_interval: Duration::from_millis(400),

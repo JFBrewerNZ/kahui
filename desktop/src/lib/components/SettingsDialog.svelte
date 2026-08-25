@@ -1,7 +1,7 @@
 <script lang="ts">
   import Modal from "./Modal.svelte";
   import { kahui } from "../state.svelte";
-  import { api, errorText } from "../api";
+  import { api, errorText, type NetworkCheck } from "../api";
 
   interface Props {
     onclose: () => void;
@@ -16,6 +16,21 @@
   let keyShown = $state(false);
   let peer = $state("");
   let peerNote = $state("");
+  let check = $state<NetworkCheck | null>(null);
+  let checking = $state(false);
+
+  async function runCheck() {
+    if (checking) return;
+    checking = true;
+    check = null;
+    try {
+      check = await api.checkNetwork();
+    } catch (err) {
+      problem = errorText(err);
+    } finally {
+      checking = false;
+    }
+  }
 
   async function revealKey() {
     try {
@@ -113,6 +128,26 @@
     </dd>
   </dl>
 
+  <!-- Whether people can reach this machine is the single question that decides
+       if you can host, and until now the only way to find out was to try. -->
+  <section class="peer">
+    <h3>Can people reach you?</h3>
+    {#if check}
+      <div class="check">
+        {#each check.rows as row}
+          <span class="ck-label">{row.label}</span>
+          <span class="ck-value" class:bad={row.ok === false} class:good={row.ok === true}>
+            {row.value}
+          </span>
+        {/each}
+      </div>
+      <p class="note" class:warn={!check.reachable}>{check.advice}</p>
+    {/if}
+    <button class="btn" onclick={runCheck} disabled={checking}>
+      {checking ? "Checking…" : check ? "Check again" : "Check"}
+    </button>
+  </section>
+
   <!-- The escape hatch for the one case the protocol cannot bootstrap itself:
        nobody can reach you, and you know nobody yet, so there is no member to
        relay for you. Dial one by hand and the rest follows. -->
@@ -156,6 +191,30 @@
 </Modal>
 
 <style>
+  .check {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0.3rem 0.8rem;
+    font-size: 0.78rem;
+    margin-bottom: 0.7rem;
+  }
+  .ck-label {
+    color: var(--faint);
+  }
+  .ck-value {
+    color: var(--dim);
+    word-break: break-word;
+  }
+  .ck-value.good {
+    color: var(--ok, #6fcf97);
+  }
+  .ck-value.bad {
+    color: var(--dim);
+  }
+  .note.warn {
+    color: var(--danger);
+  }
+
   .label {
     display: block;
     font-size: 0.72rem;

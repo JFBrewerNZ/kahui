@@ -47,6 +47,32 @@ pub const IDENTIFY_PROTOCOL: &str = "/kahui/id/1.0.0";
 /// nothing.
 const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Port a node listens on unless told otherwise.
+///
+/// A *fixed* default matters more than which number it is. With a random port,
+/// a home user who forwards one on their router is reachable exactly until they
+/// restart, which is worse than useless — it looks like it worked.
+pub const DEFAULT_PORT: u16 = 4001;
+
+/// Everything a node listens on, given a port.
+///
+/// IPv6 is not an afterthought here. A great many home connections now have a
+/// globally routable IPv6 address and no NAT in front of it at all, so two
+/// desktops that could never reach each other over IPv4 often can over IPv6
+/// with nothing configured. Leaving it out was leaving the easiest case on the
+/// table.
+pub fn default_listen_addrs(port: u16) -> Vec<Multiaddr> {
+    [
+        format!("/ip4/0.0.0.0/tcp/{port}"),
+        format!("/ip4/0.0.0.0/udp/{port}/quic-v1"),
+        format!("/ip6/::/tcp/{port}"),
+        format!("/ip6/::/udp/{port}/quic-v1"),
+    ]
+    .iter()
+    .filter_map(|addr| addr.parse().ok())
+    .collect()
+}
+
 /// How a node listens and discovers.
 #[derive(Clone, Debug)]
 pub struct NetConfig {
@@ -69,10 +95,13 @@ pub struct NetConfig {
     ///
     /// When it works this is by far the best outcome: the node becomes
     /// genuinely reachable, with no relay, no hole punch and nobody else
-    /// involved at all. Most consumer routers support it and have it switched
-    /// on. Some have it switched off, and a few have it switched off for good
-    /// reasons, so this fails quietly and the relay path takes over.
-    pub enable_upnp: bool,
+    /// involved at all.
+    ///
+    /// Three protocols get tried, because router support is a lottery and a
+    /// router that refuses one often accepts another: UPnP-IGD here in the
+    /// swarm, plus PCP and NAT-PMP from [`crate::portmap`]. All of them fail
+    /// quietly, and the relay path takes over if none works.
+    pub enable_port_mapping: bool,
     /// Whether a private address counts as being reachable.
     ///
     /// On the internet `192.168.1.5` means nothing to anybody outside the
@@ -89,18 +118,11 @@ pub struct NetConfig {
 impl Default for NetConfig {
     fn default() -> Self {
         NetConfig {
-            listen: vec![
-                "/ip4/0.0.0.0/tcp/0"
-                    .parse()
-                    .expect("hardcoded multiaddr is valid"),
-                "/ip4/0.0.0.0/udp/0/quic-v1"
-                    .parse()
-                    .expect("hardcoded multiaddr is valid"),
-            ],
+            listen: default_listen_addrs(DEFAULT_PORT),
             enable_mdns: true,
             heartbeat: Duration::from_secs(1),
             enable_relay: true,
-            enable_upnp: true,
+            enable_port_mapping: true,
             lan_reachable: false,
         }
     }
@@ -226,7 +248,7 @@ impl Behaviour {
             (Toggle::from(None), Toggle::from(None), Toggle::from(None))
         };
 
-        let upnp = if config.enable_upnp {
+        let upnp = if config.enable_port_mapping {
             Toggle::from(Some(upnp::tokio::Behaviour::default()))
         } else {
             Toggle::from(None)
@@ -300,11 +322,105 @@ pub fn build_swarm(identity: &Identity, config: &NetConfig) -> Result<Swarm<Beha
         .with_swarm_config(|c| c.with_idle_connection_timeout(IDLE_CONNECTION_TIMEOUT))
         .build();
 
-    for addr in &config.listen {
-        swarm.listen_on(addr.clone())?;
+    listen_on_all(&mut swarm, &config.listen)?;
+    Ok(swarm)
+}
+
+/// Binds every address it can, and falls back to an OS-chosen port.
+///
+/// Individual failures are expected and survivable: a machine with IPv6
+/// switched off cannot bind an IPv6 address, and a fixed port may already be
+/// taken by another copy. Only being unable to listen at *all* is fatal.
+///
+/// The fallback matters for the fixed default port. Without it, a second node on
+/// one machine — which is how anybody tests this — would simply refuse to start.
+fn listen_on_all(swarm: &mut Swarm<Behaviour>, addrs: &[Multiaddr]) -> Result<(), NetError> {
+    // Asking for nothing is a real request, not a failure to bind. A node that
+    // can only dial out — a phone behind carrier NAT, say — listens on nothing
+    // and reaches the world entirely through other members.
+    if addrs.is_empty() {
+        return Ok(());
     }
 
-    Ok(swarm)
+    // Check the port before handing it to libp2p, because libp2p will not tell
+    // us the truth about it. Its TCP transport sets `SO_REUSEADDR`, and on
+    // Windows that lets a second process bind a port the first already holds:
+    // both are told they are listening, and arriving connections go to whichever
+    // the OS feels like. A silent half-working node is far worse than a loud
+    // move to a different port.
+    let requested = port_of(&addrs[0]);
+    let addrs = if port_is_free(requested) {
+        addrs.to_vec()
+    } else {
+        tracing::warn!(
+            port = requested,
+            "that port is already in use, so this node will take whatever is free; \
+             any port you forwarded to it will not reach this node"
+        );
+        default_listen_addrs(0)
+    };
+
+    let mut bound = 0;
+    let mut last_error = None;
+
+    for addr in &addrs {
+        match swarm.listen_on(addr.clone()) {
+            Ok(_) => bound += 1,
+            Err(err) => {
+                tracing::debug!(%addr, %err, "could not listen there");
+                last_error = Some(err);
+            }
+        }
+    }
+
+    if bound > 0 {
+        return Ok(());
+    }
+
+    // Nothing bound at all, which the check above should have prevented. Try
+    // once more with an OS-chosen port rather than refusing to start.
+    tracing::warn!("could not bind anything; asking the OS for any free port");
+    for addr in default_listen_addrs(0) {
+        if swarm.listen_on(addr).is_ok() {
+            bound += 1;
+        }
+    }
+
+    if bound > 0 {
+        Ok(())
+    } else {
+        Err(last_error
+            .map(NetError::Listen)
+            .unwrap_or_else(|| NetError::Config("no listen addresses were configured".into())))
+    }
+}
+
+/// The port a listen address asks for, or zero if it names none.
+fn port_of(addr: &Multiaddr) -> u16 {
+    addr.iter()
+        .find_map(|part| match part {
+            libp2p::multiaddr::Protocol::Tcp(port) | libp2p::multiaddr::Protocol::Udp(port) => {
+                Some(port)
+            }
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// Whether a port is genuinely available on both transports.
+///
+/// Binds it plainly and lets it go. A plain socket does not set `SO_REUSEADDR`,
+/// so unlike libp2p's it fails when somebody else already holds the port —
+/// which is the whole point of asking.
+///
+/// There is a race between letting go and libp2p binding it, but it is a very
+/// short one and losing it is no worse than not having checked.
+fn port_is_free(port: u16) -> bool {
+    if port == 0 {
+        return true;
+    }
+    std::net::TcpListener::bind(("0.0.0.0", port)).is_ok()
+        && std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok()
 }
 
 #[cfg(test)]
@@ -312,12 +428,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_config_listens_on_both_transports() {
-        let config = NetConfig::default();
-        assert_eq!(config.listen.len(), 2);
-        let rendered: Vec<String> = config.listen.iter().map(|a| a.to_string()).collect();
-        assert!(rendered.iter().any(|a| a.contains("/tcp/")));
-        assert!(rendered.iter().any(|a| a.contains("/quic-v1")));
+    fn default_config_covers_both_transports_and_both_ip_versions() {
+        let rendered: Vec<String> = NetConfig::default()
+            .listen
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
+        assert!(rendered
+            .iter()
+            .any(|a| a.contains("/ip4/") && a.contains("/tcp/")));
+        assert!(rendered
+            .iter()
+            .any(|a| a.contains("/ip4/") && a.contains("/quic-v1")));
+        // IPv6 often has no NAT in front of it, which makes it the easiest way
+        // for two home machines to reach each other.
+        assert!(rendered
+            .iter()
+            .any(|a| a.contains("/ip6/") && a.contains("/tcp/")));
+        assert!(rendered
+            .iter()
+            .any(|a| a.contains("/ip6/") && a.contains("/quic-v1")));
+    }
+
+    #[test]
+    fn a_port_somebody_else_holds_is_not_reported_free() {
+        // This is the check that stops two nodes sharing a port on Windows,
+        // where libp2p's own listener would happily bind it twice and then
+        // deliver connections to whichever socket the OS picked.
+        let held = std::net::TcpListener::bind(("0.0.0.0", 0)).expect("a port");
+        let port = held.local_addr().unwrap().port();
+        assert!(!port_is_free(port), "port {port} is held by this test");
+
+        drop(held);
+        assert!(port_is_free(port), "and free once let go");
+    }
+
+    #[test]
+    fn port_zero_is_always_free_because_it_means_any_port() {
+        assert!(port_is_free(0));
+    }
+
+    #[test]
+    fn a_listen_address_reports_the_port_it_asks_for() {
+        assert_eq!(port_of(&"/ip4/0.0.0.0/tcp/4001".parse().unwrap()), 4001);
+        assert_eq!(port_of(&"/ip6/::/udp/4001/quic-v1".parse().unwrap()), 4001);
+        assert_eq!(port_of(&"/ip4/0.0.0.0/tcp/0".parse().unwrap()), 0);
+    }
+
+    #[tokio::test]
+    async fn asking_to_listen_on_nothing_listens_on_nothing() {
+        // Otherwise a dial-only node would quietly acquire a listener and stop
+        // being dial-only, which is the whole point of the household case.
+        let config = NetConfig {
+            listen: vec![],
+            enable_mdns: false,
+            ..NetConfig::default()
+        };
+        let swarm = build_swarm(&Identity::generate(), &config).expect("should build");
+        assert_eq!(swarm.listeners().count(), 0);
+    }
+
+    #[test]
+    fn the_default_port_is_fixed_not_random() {
+        // A random port would silently undo any port the user forwards.
+        assert_ne!(DEFAULT_PORT, 0);
+        assert!(NetConfig::default()
+            .listen
+            .iter()
+            .all(|addr| addr.to_string().contains(&DEFAULT_PORT.to_string())));
     }
 
     #[test]

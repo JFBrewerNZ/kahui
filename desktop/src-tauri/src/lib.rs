@@ -429,6 +429,93 @@ async fn dial(addr: String, state: State<'_, NodeState>) -> Result<(), UiError> 
     Ok(())
 }
 
+/// Works out whether anybody can reach this machine, and what to do if not.
+///
+/// Takes a few seconds and talks to the router, so it runs when asked rather
+/// than on a timer.
+#[tauri::command]
+async fn check_network(state: State<'_, NodeState>) -> Result<NetworkCheck, UiError> {
+    // The port we actually listen on, which is the one the router has to be
+    // told about. Falls back to the default when nothing is bound yet.
+    let port = state
+        .get()
+        .await?
+        .status()
+        .await
+        .ok()
+        .and_then(|status| {
+            status.listen_addrs.iter().find_map(|addr| {
+                addr.rsplit("/tcp/")
+                    .next()
+                    .and_then(|tail| tail.parse::<u16>().ok())
+            })
+        })
+        .unwrap_or(kahui_node::DEFAULT_PORT);
+
+    let found = kahui_node::diagnose(port).await;
+    Ok(NetworkCheck {
+        reachable: found.reachable(),
+        advice: found.advice(),
+        rows: vec![
+            Row::new(
+                "Router",
+                found.gateway.clone().unwrap_or_else(|| "not found".into()),
+            ),
+            Row::new(
+                "This PC",
+                found.local.clone().unwrap_or_else(|| "no address".into()),
+            ),
+            Row::new("Port", port.to_string()),
+            Row::result("PCP", &found.pcp),
+            Row::result("NAT-PMP", &found.natpmp),
+            Row::result("UPnP", &found.upnp),
+            Row::new(
+                "IPv6",
+                if found.global_ipv6.is_empty() {
+                    "no public address".into()
+                } else {
+                    found.global_ipv6.join(", ")
+                },
+            ),
+        ],
+    })
+}
+
+/// One line of the network check.
+#[derive(serde::Serialize)]
+struct Row {
+    label: String,
+    value: String,
+    /// `None` for plain facts, `Some` for things that either worked or did not.
+    ok: Option<bool>,
+}
+
+impl Row {
+    fn new(label: &str, value: String) -> Self {
+        Row {
+            label: label.into(),
+            value,
+            ok: None,
+        }
+    }
+
+    fn result(label: &str, attempt: &kahui_node::Attempt) -> Self {
+        Row {
+            label: label.into(),
+            value: attempt.detail().to_string(),
+            ok: Some(attempt.worked()),
+        }
+    }
+}
+
+/// What the window shows after a network check.
+#[derive(serde::Serialize)]
+struct NetworkCheck {
+    reachable: bool,
+    advice: String,
+    rows: Vec<Row>,
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -477,6 +564,7 @@ pub fn run() {
             set_display_name,
             sync_now,
             dial,
+            check_network,
         ])
         // Whether the page loaded at all, and where from. Without this a blank
         // window and a broken window look identical from out here.

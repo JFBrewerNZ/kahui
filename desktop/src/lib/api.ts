@@ -72,6 +72,19 @@ export interface Status {
   relaying_for: number;
 }
 
+export interface CheckRow {
+  label: string;
+  value: string;
+  /** null for plain facts; true or false for things that were attempted. */
+  ok: boolean | null;
+}
+
+export interface NetworkCheck {
+  reachable: boolean;
+  advice: string;
+  rows: CheckRow[];
+}
+
 export interface InviteText {
   token: string;
   link: string;
@@ -170,6 +183,9 @@ const realApi = {
   setDisplayName: (name: string) => invoke<void>("set_display_name", { name }),
   syncNow: () => invoke<number>("sync_now"),
   dial: (addr: string) => invoke<void>("dial", { addr }),
+
+  /** Ask the router whether it will let anybody in. Takes a few seconds. */
+  checkNetwork: () => invoke<NetworkCheck>("check_network"),
 };
 
 const realOnNodeEvent = (handler: (event: NodeEvent) => void) =>

@@ -19,8 +19,8 @@ use std::sync::Arc;
 use futures::StreamExt;
 use kahui_net::behaviour::Behaviour;
 use kahui_net::{
-    peer_id_of, BehaviourEvent, GossipMessage, Invite, InvitePeer, Presence, SyncRequest,
-    SyncResponse, MAX_SYNC_BATCH,
+    peer_id_of, BehaviourEvent, GossipMessage, Invite, InvitePeer, PortMapUpdate, Presence,
+    SyncRequest, SyncResponse, MAX_SYNC_BATCH,
 };
 use kahui_proto::{ChannelId, CommunityId, Event, EventId, Identity, Payload, SignedEvent, UserId};
 use kahui_store::{Inserted, PeerRecord, Store};
@@ -33,7 +33,7 @@ use libp2p::{
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::MissedTickBehavior;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::api::{Command, CommunityStatus, Message, NodeEvent, Reachability, Status};
 use crate::{chain, now_ms, NodeConfig, NodeError};
@@ -71,6 +71,8 @@ enum Tick {
     Swarm(Box<SwarmEvent<BehaviourEvent>>),
     Presence,
     AntiEntropy,
+    PortMap(PortMapUpdate),
+    PortMapStopped,
     Closed,
 }
 
@@ -165,6 +167,18 @@ pub(crate) struct Engine {
     relay_listeners: HashMap<PeerId, libp2p::core::transport::ListenerId>,
     /// Members who have accepted and are actually carrying for us.
     relayed_by: HashSet<PeerId>,
+
+    /// Reports from the task asking the router to open a port, if it is running.
+    ///
+    /// Started once we know which port we actually listen on, because that is
+    /// the number the router has to be told about.
+    port_map: Option<mpsc::Receiver<PortMapUpdate>>,
+
+    /// A port the router opened but would not give us an address for.
+    ///
+    /// Held until a peer tells us how we look from outside, at which point the
+    /// two halves make a dialable address. See [`Self::claim_mapped_port`].
+    mapped_port: Option<u16>,
     /// Members whose traffic we are carrying. Reachable nodes pay it forward.
     relaying_for: HashSet<PeerId>,
 
@@ -204,6 +218,8 @@ impl Engine {
             relay_listeners: HashMap::new(),
             relayed_by: HashSet::new(),
             relaying_for: HashSet::new(),
+            port_map: None,
+            mapped_port: None,
             shutdown_reply: None,
         }
     }
@@ -228,6 +244,17 @@ impl Engine {
                 event = self.swarm.select_next_some() => Tick::Swarm(Box::new(event)),
                 _ = presence.tick() => Tick::Presence,
                 _ = anti_entropy.tick() => Tick::AntiEntropy,
+                // Only ever ready once the mapper is running. `pending()` keeps
+                // this branch inert rather than making the whole loop optional.
+                update = async {
+                    match self.port_map.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match update {
+                    Some(update) => Tick::PortMap(update),
+                    None => Tick::PortMapStopped,
+                },
             };
 
             match tick {
@@ -237,6 +264,8 @@ impl Engine {
                     }
                 }
                 Tick::Swarm(event) => self.handle_swarm(*event),
+                Tick::PortMap(update) => self.handle_port_map(update),
+                Tick::PortMapStopped => self.port_map = None,
                 Tick::Presence => {
                     self.announce_presence();
                     self.redial_known_peers();
@@ -438,6 +467,7 @@ impl Engine {
                 if !self.listen_addrs.contains(&address) {
                     self.listen_addrs.push(address.clone());
                 }
+                self.start_port_mapping(&address);
                 self.emit(NodeEvent::Listening {
                     addr: address.to_string(),
                 });
@@ -530,6 +560,7 @@ impl Engine {
                 for addr in &info.listen_addrs {
                     self.swarm.add_peer_address(peer_id, addr.clone());
                 }
+                self.claim_mapped_port(&info.observed_addr);
 
                 // A peer that speaks the relay protocol can carry for us if we
                 // turn out to need it. `identify` already tells us who does, so
@@ -730,6 +761,115 @@ impl Engine {
             NatStatus::Unknown => Reachability::Unknown,
         };
         self.reachability_confirmed(next);
+    }
+
+    /// Asks the router to open the port we just started listening on.
+    ///
+    /// Waits for a real listen address because until then we do not know the
+    /// number: with an OS-assigned port there is nothing to ask for yet.
+    ///
+    /// Only ever done once. The task renews its own mappings, and a second one
+    /// would fight the first over the same port.
+    fn start_port_mapping(&mut self, address: &Multiaddr) {
+        if self.port_map.is_some() || !self.config.net.enable_port_mapping {
+            return;
+        }
+
+        let Some(port) = address.iter().find_map(|part| match part {
+            Protocol::Tcp(port) | Protocol::Udp(port) => Some(port),
+            _ => None,
+        }) else {
+            return;
+        };
+        if port == 0 {
+            return;
+        }
+
+        // Loopback goes nowhere, and there is no router in front of it.
+        if address.iter().any(|part| match part {
+            Protocol::Ip4(ip) => ip.is_loopback(),
+            Protocol::Ip6(ip) => ip.is_loopback(),
+            _ => false,
+        }) {
+            return;
+        }
+
+        debug!(port, "asking the router to open a port");
+        self.port_map = Some(kahui_net::keep_open(port));
+    }
+
+    /// Acts on what the router said.
+    fn handle_port_map(&mut self, update: PortMapUpdate) {
+        match update {
+            PortMapUpdate::Opened { external, protocol } => {
+                // The best possible outcome: dialable by anyone, with no third
+                // party involved at all.
+                info!(
+                    protocol = protocol.label(),
+                    addrs = external.len(),
+                    "the router opened a port; hosting works from here"
+                );
+                for addr in external {
+                    self.swarm.add_external_address(addr);
+                }
+                self.reachability_confirmed(Reachability::Direct);
+                self.announce_presence();
+            }
+            PortMapUpdate::MappedWithoutAddress { port, protocol } => {
+                // Half an answer. The port is open, but we still have to learn
+                // our own public address before we can tell anybody about it.
+                debug!(
+                    protocol = protocol.label(),
+                    port, "the router opened a port without saying where"
+                );
+                self.mapped_port = Some(port);
+            }
+            PortMapUpdate::Refused(why) => {
+                // Common and survivable. Relaying covers it.
+                debug!(%why, "the router would not open a port");
+            }
+        }
+    }
+
+    /// Turns a mapped port plus a peer's view of us into a dialable address.
+    ///
+    /// A router that opens a port but refuses to name its own public address is
+    /// a real and fairly common combination. The missing half is exactly what
+    /// every peer we talk to can see, so `identify`'s observed address supplies
+    /// it — with one substitution: the port it observed is whatever the NAT
+    /// assigned our outbound connection, which is not the port we listen on.
+    /// The IP is what we needed.
+    fn claim_mapped_port(&mut self, observed: &Multiaddr) {
+        let Some(port) = self.mapped_port else {
+            return;
+        };
+
+        let Some(ip) = observed.iter().find_map(|part| match part {
+            Protocol::Ip4(ip) => Some(std::net::IpAddr::V4(ip)),
+            Protocol::Ip6(ip) => Some(std::net::IpAddr::V6(ip)),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        let addrs = kahui_net::portmap::addrs_for(ip, Some(port), Some(port));
+        // A peer on our own network sees our private address, which tells us
+        // nothing about being reachable from outside. Only a global one counts.
+        if !addrs
+            .iter()
+            .all(|addr| kahui_net::addr_is_reachable_beyond_lan(addr))
+        {
+            return;
+        }
+
+        info!(%ip, port, "a peer told us our address; the mapped port is usable");
+        // Done: no need to keep asking every peer we meet.
+        self.mapped_port = None;
+        for addr in addrs {
+            self.swarm.add_external_address(addr);
+        }
+        self.reachability_confirmed(Reachability::Direct);
+        self.announce_presence();
     }
 
     /// Acts on a change of reachability, whatever established it.
