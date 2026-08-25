@@ -338,8 +338,8 @@ async fn upnp_map(net: LocalNetwork, port: NonZeroU16) -> Result<PortMapUpdate, 
         Ok(external) => Ok(PortMapUpdate::Opened {
             external: addrs_for(
                 external,
-                tcp_open.then(|| port.get()),
-                udp_open.then(|| port.get()),
+                tcp_open.then_some(port.get()),
+                udp_open.then_some(port.get()),
             ),
             protocol: MapProtocol::Upnp,
         }),
@@ -490,14 +490,14 @@ pub fn keep_open(port: u16) -> mpsc::Receiver<PortMapUpdate> {
                     }
                     Err(err) => {
                         tracing::debug!(%err, "the router would not open a port");
-                        if announced.is_none() && !mapped_blindly {
-                            if tx
+                        if announced.is_none()
+                            && !mapped_blindly
+                            && tx
                                 .send(PortMapUpdate::Refused(err.to_string()))
                                 .await
                                 .is_err()
-                            {
-                                return;
-                            }
+                        {
+                            return;
                         }
                         RETRY_AFTER
                     }

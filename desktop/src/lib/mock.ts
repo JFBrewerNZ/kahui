@@ -153,6 +153,22 @@ export const mockApi = {
   setDisplayName: async (_name: string) => {},
   syncNow: () => wait(2),
   dial: async (_addr: string) => {},
+  // The interesting case to preview is the one that needs explaining.
+  checkNetwork: async () => ({
+    reachable: false,
+    advice:
+      "Your router will not open a port. Forward TCP and UDP 4001 to 192.168.1.143, " +
+      "or connect to a peer who can relay for you.",
+    rows: [
+      { label: "Router", value: "192.168.1.1", ok: null },
+      { label: "This PC", value: "192.168.1.143", ok: null },
+      { label: "Port", value: "4001", ok: null },
+      { label: "PCP", value: "no response", ok: false },
+      { label: "NAT-PMP", value: "no response", ok: false },
+      { label: "UPnP", value: "501 Action Failed", ok: false },
+      { label: "IPv6", value: "no public address", ok: null },
+    ],
+  }),
 };
 
 const mockDataDir = "C:\Users\you\AppData\Local\Kahui\Kahui\data";

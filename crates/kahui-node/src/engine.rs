@@ -855,10 +855,7 @@ impl Engine {
         let addrs = kahui_net::portmap::addrs_for(ip, Some(port), Some(port));
         // A peer on our own network sees our private address, which tells us
         // nothing about being reachable from outside. Only a global one counts.
-        if !addrs
-            .iter()
-            .all(|addr| kahui_net::addr_is_reachable_beyond_lan(addr))
-        {
+        if !addrs.iter().all(kahui_net::addr_is_reachable_beyond_lan) {
             return;
         }
 
