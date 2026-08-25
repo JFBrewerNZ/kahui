@@ -382,9 +382,8 @@ async fn open(net: LocalNetwork, port: NonZeroU16) -> Result<(Held, PortMapUpdat
     let tcp = map_one(net, InternetProtocol::Tcp, port).await;
     let udp = map_one(net, InternetProtocol::Udp, port).await.ok();
 
-    let (protocol, ip) = match (&tcp, &udp) {
-        (Ok(m), _) => (protocol_of(m), external_ip(net, m).await?),
-        (Err(_), Some(m)) => (protocol_of(m), external_ip(net, m).await?),
+    let mapped = match (&tcp, &udp) {
+        (Ok(m), _) | (Err(_), Some(m)) => m,
 
         // Nothing is listening on the gateway's mapping port, which rules out
         // both PCP and NAT-PMP. UPnP-IGD is a different port and a different
@@ -407,16 +406,34 @@ async fn open(net: LocalNetwork, port: NonZeroU16) -> Result<(Held, PortMapUpdat
         }
     };
 
+    let protocol = protocol_of(mapped);
+    let held = Held {
+        tcp: tcp.as_ref().ok().cloned(),
+        udp: udp.clone(),
+    };
+
+    // The port is open. Where it is open *at* is a second question, and for
+    // NAT-PMP a second request, which can fail on its own. Losing that answer
+    // is no reason to throw away a working mapping — a peer can tell us the
+    // address we could not get here.
+    let Ok(ip) = external_ip(net, mapped).await else {
+        tracing::debug!("the router opened a port but would not say its address");
+        return Ok((
+            held,
+            PortMapUpdate::MappedWithoutAddress {
+                port: port.get(),
+                protocol,
+            },
+        ));
+    };
+
     let external = addrs_for(
         ip,
         tcp.as_ref().ok().map(|m| m.external_port().get()),
         udp.as_ref().map(|m| m.external_port().get()),
     );
 
-    Ok((
-        Held { tcp: tcp.ok(), udp },
-        PortMapUpdate::Opened { external, protocol },
-    ))
+    Ok((held, PortMapUpdate::Opened { external, protocol }))
 }
 
 /// Keeps a port open on the router for as long as this task is alive.
