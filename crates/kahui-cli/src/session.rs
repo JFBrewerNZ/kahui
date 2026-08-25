@@ -442,9 +442,24 @@ impl Session {
         if !usable {
             // Handing somebody an invite that cannot possibly work, and letting
             // them discover it by waiting for a timeout, is the worst of both.
-            self.problem(
-                "Only works on your network. Forward your port, or /dial someone who can relay.",
-            );
+            // Name the port, since "forward your port" is no use without it.
+            let port = self
+                .node
+                .status()
+                .await
+                .ok()
+                .and_then(|status| {
+                    status.listen_addrs.iter().find_map(|addr| {
+                        addr.rsplit("/tcp/")
+                            .next()
+                            .and_then(|t| t.parse::<u16>().ok())
+                    })
+                })
+                .map(|port| format!("Forward TCP and UDP {port}"))
+                .unwrap_or_else(|| "Forward your port".to_string());
+            self.problem(&format!(
+                "Only works on your network. {port}, or /dial someone who can relay."
+            ));
         }
         Ok(())
     }
