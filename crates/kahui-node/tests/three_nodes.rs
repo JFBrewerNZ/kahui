@@ -41,6 +41,9 @@ async fn spawn(dir: &Path, name: &str) -> NodeHandle {
             // Loopback only: nothing here should touch the developer's network.
             listen: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
             enable_mdns: false,
+            // Nor their router. A loopback address would be skipped anyway, but
+            // this test should not depend on that to keep its promise.
+            enable_port_mapping: false,
             heartbeat: Duration::from_millis(300),
             ..NetConfig::default()
         },
