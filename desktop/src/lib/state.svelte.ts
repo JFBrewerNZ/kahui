@@ -84,19 +84,19 @@ class Kahui {
           good: true,
           detail:
             status.relaying_for > 0
-              ? `serving history, and relaying for ${status.relaying_for} member${status.relaying_for === 1 ? "" : "s"}`
-              : "others can reach you directly, so you can serve history to them",
+              ? `relaying for ${status.relaying_for} member${status.relaying_for === 1 ? "" : "s"}`
+              : "people can dial you directly",
         };
       case "behind_nat":
         return {
-          label: status.relayed_by ? "reachable via a member" : "not reachable yet",
+          label: status.relayed_by ? "reachable via a member" : "not reachable",
           good: !!status.relayed_by,
           detail: status.relayed_by
-            ? "a router is in the way, so another member is carrying for you until a direct connection can be made"
-            : "a router is in the way and no member has taken you on yet — you can read and post, but cannot serve history",
+            ? "a member is carrying for you until a direct link is made"
+            : "your router is in the way — run the check below",
         };
       default:
-        return { label: "checking", good: false, detail: "asking peers whether they can reach you" };
+        return { label: "checking", good: false, detail: "asking peers if they can reach you" };
     }
   });
   me = $derived(this.status?.user ?? "");
