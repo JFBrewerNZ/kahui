@@ -534,8 +534,10 @@ struct NetworkCheck {
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
+            // Kademlia warns "no known peers" before this node has met
+            // anybody, which is the normal state of a fresh install.
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,libp2p_kad=error")),
         )
         .with_writer(std::io::stderr)
         .init();

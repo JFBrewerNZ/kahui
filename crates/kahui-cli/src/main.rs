@@ -191,9 +191,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Quiet by default; `RUST_LOG=kahui_node=debug` turns the machinery on.
+    //
+    // Kademlia is held to `error` because it warns "no known peers" whenever it
+    // tries to bootstrap before this node has met anybody — which is the normal
+    // state of a fresh node, and reads to a person like something is broken.
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("warn,libp2p_kad=error")),
         )
         .with_writer(std::io::stderr)
         .init();
