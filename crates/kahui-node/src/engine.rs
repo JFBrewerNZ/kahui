@@ -223,6 +223,13 @@ pub(crate) struct Engine {
     /// dial — see [`kahui_net::punch`].
     nat_addrs: HashSet<Multiaddr>,
 
+    /// The addresses that were current when we last told the hash table.
+    ///
+    /// Compared against reality on every tick, because enumerating the places an
+    /// address can change is a game you lose eventually — and losing it means a
+    /// record in the network pointing somewhere this node no longer is.
+    published_addrs: Vec<Multiaddr>,
+
     /// Where each member's router presents them, for punching towards.
     punch_targets: HashMap<PeerId, Vec<Multiaddr>>,
 
@@ -300,6 +307,7 @@ impl Engine {
             wanted_peers: HashSet::new(),
             nat_addrs: HashSet::new(),
             punch_targets: HashMap::new(),
+            published_addrs: Vec::new(),
             dht_announced: false,
             offering_relay: false,
             mapped_port: None,
@@ -736,6 +744,38 @@ impl Engine {
         }
     }
 
+    /// Says again where we are, because where we are has changed.
+    ///
+    /// A provider record carries the addresses its publisher had at the moment
+    /// it was published, and Kademlia will not repeat it for an hour. That is a
+    /// problem precisely in the case this design cares most about: a node behind
+    /// a router announces a community the instant it creates one, which is
+    /// before it has been offered a relay, so the record names nowhere. It then
+    /// becomes reachable a second later and nobody is told.
+    ///
+    /// So whenever this node's addresses change in a way that matters — a relay
+    /// reservation, a port the router opened, being found reachable — everything
+    /// it holds is published again.
+    fn dht_republish(&mut self) {
+        if !self.swarm.behaviour().kad.is_enabled() || self.joined.is_empty() {
+            return;
+        }
+        let mut current: Vec<Multiaddr> = self.swarm.external_addresses().cloned().collect();
+        current.sort();
+        if current == self.published_addrs {
+            return;
+        }
+
+        debug!(
+            count = current.len(),
+            "our address changed, so saying again what we hold"
+        );
+        self.published_addrs = current;
+        for community in self.joined.iter().copied().collect::<Vec<_>>() {
+            self.dht_provide(&community);
+        }
+    }
+
     /// Publishes everything this node holds, now that somebody is listening.
     ///
     /// Cheap and idempotent, but pointless to repeat: Kademlia republishes on
@@ -832,6 +872,8 @@ impl Engine {
             // A node that started alone and has since met somebody still needs
             // to say what it holds.
             self.dht_announce_everything();
+            // And one whose address has changed since it last said so.
+            self.dht_republish();
             self.chase_wanted_peers();
         }
 
@@ -988,6 +1030,9 @@ impl Engine {
                 // by a stranger.
                 if address.iter().any(|part| part == Protocol::P2pCircuit) {
                     self.swarm.add_external_address(address.clone());
+                    // Now findable through that relay, which the hash table was
+                    // told nothing about when this node last published.
+                    self.dht_republish();
                 }
 
                 self.start_port_mapping(&address);
@@ -1379,6 +1424,7 @@ impl Engine {
                     self.swarm.add_external_address(addr);
                 }
                 self.reachability_confirmed(Reachability::Direct);
+                self.dht_republish();
                 self.announce_presence();
             }
             PortMapUpdate::MappedWithoutAddress { port, protocol } => {
@@ -1471,6 +1517,7 @@ impl Engine {
             Reachability::Direct => {
                 self.release_relays();
                 self.dht_offer_relay();
+                self.dht_republish();
             }
             Reachability::Unknown => self.dht_withdraw_relay(),
         }
