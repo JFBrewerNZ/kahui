@@ -316,6 +316,70 @@ async fn a_reachable_node_offers_itself_without_being_asked() {
     }
 }
 
+/// A join made long after the node started, not moments after.
+///
+/// This is the ordinary case — somebody opens the app, reads a message, then
+/// pastes an id — and it used to be the fragile one. A provider lookup answers
+/// with peer ids and no addresses; libp2p keeps those only in the address book
+/// of the query that found them. Dialling a provider therefore worked while the
+/// lookup was still running and failed afterwards, which made joining depend on
+/// timing nobody controls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn joining_works_long_after_starting_up() {
+    let root = TempDir::new().unwrap();
+    let dir = |name: &str| root.path().join(name);
+
+    let hub = spawn(
+        &dir("hub"),
+        "hub",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::Direct,
+        vec![],
+    )
+    .await;
+    let hub_addr = wait_until_listening(&hub, "hub").await;
+
+    let alice = spawn(
+        &dir("alice"),
+        "alice",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::Direct,
+        vec![hub_addr.clone()],
+    )
+    .await;
+    wait_until_listening(&alice, "alice").await;
+    let community = alice
+        .create_community("Later", "Joined in a while")
+        .await
+        .unwrap();
+    let general = alice.channels(community).await.unwrap()[0].id;
+    alice.post(community, general, "still here").await.unwrap();
+
+    let bob = spawn(
+        &dir("bob"),
+        "bob",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::Direct,
+        vec![hub_addr],
+    )
+    .await;
+
+    // Long enough that every lookup Bob made at start-up has finished and been
+    // cleaned up, so nothing is left over to make this work by accident.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+
+    bob.join(Invite::by_id(community)).await.expect("bob joins");
+    eventually("bob to catch up on a community he joined late", || async {
+        !texts(&bob, community, general).await.is_empty()
+    })
+    .await;
+    assert_eq!(texts(&bob, community, general).await, vec!["still here"]);
+
+    for node in [&hub, &alice, &bob] {
+        node.shutdown().await.ok();
+    }
+}
+
 /// Joining by id must not silently succeed when there is nobody to find.
 ///
 /// A join that "works" and then sits empty forever is worse than one that

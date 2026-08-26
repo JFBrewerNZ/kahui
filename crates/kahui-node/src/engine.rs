@@ -61,6 +61,10 @@ const RELAY_MEMORY: usize = 8;
 /// the bookkeeping. Far above anything a real node reaches.
 const MAX_DHT_QUERIES: usize = 256;
 
+/// How many unreachable peers to chase in one round, so that a large community
+/// full of offline members cannot turn a tick into a flood of lookups.
+const MAX_PEERS_CHASED: usize = 4;
+
 /// Members named in an invite, beyond ourselves.
 ///
 /// An invite that names several members keeps working after any one of them
@@ -198,6 +202,17 @@ pub(crate) struct Engine {
     /// be remembered alongside the query id to make sense of the answer.
     dht_queries: HashMap<kad::QueryId, DhtQuery>,
 
+    /// Peers the hash table named that we have not managed to reach yet.
+    ///
+    /// A provider lookup answers with peer *ids* and throws the addresses away —
+    /// libp2p keeps them only in the address book of the query that found them,
+    /// which is discarded when the query ends. So dialling a provider works
+    /// while the query is alive and fails with "no addresses" afterwards, which
+    /// is a race, and races of this kind fail in front of the person joining.
+    /// Keeping the list lets us ask the network where they are, which is a
+    /// question with a reliable answer.
+    wanted_peers: HashSet<PeerId>,
+
     /// Whether what this node holds has been published to the hash table.
     ///
     /// The first attempt happens when a community is created or joined, which is
@@ -258,6 +273,7 @@ impl Engine {
             relaying_for: HashSet::new(),
             port_map: None,
             dht_queries: HashMap::new(),
+            wanted_peers: HashSet::new(),
             dht_announced: false,
             offering_relay: false,
             mapped_port: None,
@@ -482,9 +498,11 @@ impl Engine {
     /// contain a community id and nothing else.
     fn dht_provide(&mut self, community: &CommunityId) {
         let key = kahui_net::community_key(community);
+        let short = community.short();
         if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-            if let Err(err) = kad.start_providing(key) {
-                debug!(%err, "could not announce a community to the hash table");
+            match kad.start_providing(key) {
+                Ok(_) => debug!(community = %short, "announcing that we hold this"),
+                Err(err) => debug!(%err, "could not announce a community to the hash table"),
             }
         }
     }
@@ -593,6 +611,11 @@ impl Engine {
                 return;
             }
 
+            kad::QueryResult::StartProviding(Ok(kad::AddProviderOk { key })) => {
+                debug!(key = ?key, "published to the hash table");
+                return;
+            }
+
             kad::QueryResult::StartProviding(Err(err)) => {
                 debug!(%err, "could not publish to the hash table");
                 return;
@@ -617,13 +640,11 @@ impl Engine {
             match what {
                 DhtQuery::Relays => {
                     debug!(%peer, "the network offered somebody who can carry");
-                    // Dial it: a reservation needs a live connection, and
-                    // identify will confirm it really speaks the relay protocol.
-                    let _ = self.swarm.dial(peer);
+                    self.want_peer(peer);
                 }
                 DhtQuery::Community(community) => {
                     debug!(%peer, community = %community.short(), "found a member");
-                    let _ = self.swarm.dial(peer);
+                    self.want_peer(peer);
                 }
                 DhtQuery::Warmup => {}
             }
@@ -641,6 +662,45 @@ impl Engine {
             .as_mut()
             .map(|kad| kad.kbuckets().map(|bucket| bucket.num_entries()).sum())
             .unwrap_or(0)
+    }
+
+    /// Tries to reach somebody the hash table named.
+    ///
+    /// The dial is worth trying straight away: while the lookup that found this
+    /// peer is still running, libp2p can still see the addresses it came back
+    /// with. If that misses, [`Self::chase_wanted_peers`] asks properly.
+    fn want_peer(&mut self, peer: PeerId) {
+        if peer == *self.swarm.local_peer_id() || self.swarm.is_connected(&peer) {
+            return;
+        }
+        self.wanted_peers.insert(peer);
+        let _ = self.swarm.dial(peer);
+    }
+
+    /// Asks the network where somebody is, for anybody we could not reach.
+    ///
+    /// `get_closest_peers` on a peer's own id is the standard way to resolve one
+    /// to addresses: the nodes nearest it answer with those addresses, and
+    /// dialling them along the way is how the lookup proceeds. Unlike a provider
+    /// record, this does not throw the addresses away.
+    fn chase_wanted_peers(&mut self) {
+        let wanted: Vec<PeerId> = self
+            .wanted_peers
+            .iter()
+            .copied()
+            .filter(|peer| !self.swarm.is_connected(peer))
+            .take(MAX_PEERS_CHASED)
+            .collect();
+
+        // Anybody we did reach needs no further chasing.
+        self.wanted_peers
+            .retain(|peer| !self.swarm.is_connected(peer));
+
+        for peer in wanted {
+            debug!(%peer, "asking the network where this peer is");
+            self.dht_ask(DhtQuery::Warmup, |kad| Some(kad.get_closest_peers(peer)));
+            let _ = self.swarm.dial(peer);
+        }
     }
 
     /// Publishes everything this node holds, now that somebody is listening.
@@ -684,6 +744,7 @@ impl Engine {
             // A node that started alone and has since met somebody still needs
             // to say what it holds.
             self.dht_announce_everything();
+            self.chase_wanted_peers();
         }
 
         // Bound what an unanswered question can cost us. Queries time out inside
