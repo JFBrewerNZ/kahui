@@ -27,11 +27,12 @@ use libp2p::identity::Keypair;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{
-    autonat, dcutr, gossipsub, identify, mdns, noise, relay,
+    autonat, dcutr, gossipsub, identify, kad, mdns, noise, relay,
     request_response::{self, ProtocolSupport},
     tcp, upnp, yamux, Multiaddr, StreamProtocol, Swarm, SwarmBuilder,
 };
 
+use crate::discovery::KAD_PROTOCOL;
 use crate::wire::{topic_name, GossipMessage, SyncRequest, SyncResponse, SYNC_PROTOCOL};
 use crate::NetError;
 
@@ -102,6 +103,12 @@ pub struct NetConfig {
     /// swarm, plus PCP and NAT-PMP from [`crate::portmap`]. All of them fail
     /// quietly, and the relay path takes over if none works.
     pub enable_port_mapping: bool,
+    /// Whether to take part in the distributed hash table.
+    ///
+    /// On by default, and rarely worth turning off. Without it a node can only
+    /// talk to peers it was explicitly given, which is the situation that made
+    /// hosting from home require a hand-configured address.
+    pub enable_dht: bool,
     /// Whether a private address counts as being reachable.
     ///
     /// On the internet `192.168.1.5` means nothing to anybody outside the
@@ -123,6 +130,7 @@ impl Default for NetConfig {
             heartbeat: Duration::from_secs(1),
             enable_relay: true,
             enable_port_mapping: true,
+            enable_dht: true,
             lan_reachable: false,
         }
     }
@@ -146,6 +154,12 @@ pub struct Behaviour {
     pub dcutr: Toggle<dcutr::Behaviour>,
     /// Asking the router nicely, which is better than all of the above.
     pub upnp: Toggle<upnp::tokio::Behaviour>,
+    /// How a node finds anybody it has not been told about.
+    ///
+    /// Runs in client mode until this node is known to be dialable, then
+    /// becomes a server and starts carrying part of the routing table. See
+    /// [`crate::discovery`] for why those are the same decision.
+    pub kad: Toggle<kad::Behaviour<kad::store::MemoryStore>>,
 }
 
 impl Behaviour {
@@ -226,6 +240,33 @@ impl Behaviour {
             Toggle::from(None)
         };
 
+        let kad = if config.enable_dht {
+            let mut settings = kad::Config::new(StreamProtocol::new(KAD_PROTOCOL));
+            settings
+                // Communities are small and long-lived, and a provider record
+                // that expires is a member who becomes unfindable. Republish
+                // comfortably inside the expiry.
+                .set_provider_record_ttl(Some(Duration::from_secs(12 * 60 * 60)))
+                .set_provider_publication_interval(Some(Duration::from_secs(60 * 60)))
+                // A laptop that closes its lid should not hold a routing table
+                // slot for long.
+                .set_query_timeout(Duration::from_secs(30));
+
+            let mut dht = kad::Behaviour::with_config(
+                peer_id,
+                kad::store::MemoryStore::new(peer_id),
+                settings,
+            );
+            // Client until proven otherwise. A node that cannot be dialled but
+            // claims a place in the routing table is a black hole for every
+            // query routed through it, so this is the safe default and AutoNAT
+            // upgrades it once somebody has actually dialled us.
+            dht.set_mode(Some(kad::Mode::Client));
+            Toggle::from(Some(dht))
+        } else {
+            Toggle::from(None)
+        };
+
         let (relay, relay_client, dcutr) = if config.enable_relay {
             (
                 Toggle::from(Some(relay::Behaviour::new(
@@ -264,6 +305,7 @@ impl Behaviour {
             relay_client,
             dcutr,
             upnp,
+            kad,
         })
     }
 

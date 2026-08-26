@@ -65,7 +65,7 @@ On the droplet:
 ```bash
 # Grab the static Linux build — no glibc version to worry about.
 # Check https://github.com/JFBrewerNZ/kahui/releases/latest for the current one.
-VERSION=0.7.0
+VERSION=0.8.0
 curl -LO https://github.com/JFBrewerNZ/kahui/releases/download/v$VERSION/kahui-$VERSION-x86_64-unknown-linux-musl.tar.gz
 tar xzf kahui-$VERSION-x86_64-unknown-linux-musl.tar.gz
 cd kahui-$VERSION-x86_64-unknown-linux-musl

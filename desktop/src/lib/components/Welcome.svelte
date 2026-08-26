@@ -134,7 +134,7 @@
         class="field code mono"
         rows="4"
         bind:value={invite}
-        placeholder="kahui1… or kahui://join/…"
+        placeholder="kahui1…, kahui://join/…, or a community id"
         spellcheck="false"
       ></textarea>
       {#if problem}<p class="problem">{problem}</p>{/if}

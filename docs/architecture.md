@@ -211,6 +211,19 @@ hand is only useful if it is the same port next time.
 `kahui doctor` reports what each protocol answered. When all of it fails, and it sometimes
 will, the rest of this section is the fallback rather than the plan.
 
+**Finding somebody to fall back to** is its own problem, and for a long time it was the
+unsolved one. Relaying works only if you can already dial a relay, which meant somebody had
+to hand you an address — so "no configuration" was true of everything except the step that
+mattered. Kāhui now runs a Kademlia distributed hash table on its own protocol, in which
+nodes that can be dialled hold the routing table and offer to carry for the ones that
+cannot. Those are the same set of nodes, which is why nothing has to be volunteered or
+configured: being reachable is the entire qualification. A node behind a router looks up
+somebody reachable, takes a reservation, publishes the resulting circuit address, and is
+then findable by anybody — including by a community id alone, with no address involved. See
+[discovery.md](discovery.md), and note the honest floor: one address has to come from
+somewhere the first time, because finding a stranger with no prior information is not
+something IP can do.
+
 **AutoNAT** answers the one question a node genuinely cannot answer alone. Sending a packet
 proves nothing about whether anybody can send one back, so the node asks peers to dial it
 and believes what they find. Until then its reachability is `Unknown`, and an address a
@@ -408,14 +421,16 @@ than a centralised one that does not.
 beginning each round — fine for thousands of events, not for millions. Presence is O(members).
 None of this is a problem at community scale; all of it needs work before it is a problem.
 
-**Reachability.** Port mapping, relay and hole punching are built (§5b), so a community
-works as long as one of its members can be dialled. Routers that refuse PCP, NAT-PMP and
-UPnP alike do exist — the network this was developed on has one — and there the port must
-be forwarded by hand or a reachable member found. If literally every member is behind
-carrier-grade NAT there is nothing to relay through, and no fallback to anybody else's
-relay is provided on purpose. There is still no DHT: members find each other from an invite
-plus presence, which suits a community and will not find arbitrary peers on the open
-internet.
+**Reachability.** Port mapping, relay, hole punching and a distributed hash table are all
+built (§5b), so a community works as long as *anybody on the network* can be dialled — not
+necessarily one of its own members. Routers that refuse PCP, NAT-PMP and UPnP alike do exist
+— the network this was developed on has one — and there the node is carried by somebody it
+looked up rather than by somebody it was told about.
+
+Two limits remain and are not going away. A node needs one address to start from, once,
+which is a property of IP rather than of this design. And if every node on the whole network
+is behind carrier-grade NAT there is nothing to relay through at all; no fallback to
+infrastructure of ours is provided, on purpose.
 
 **Off-grid.** The data model is delay-tolerant, and a message provably crosses a chain of
 members who were never online together. The transports for a genuinely disconnected mesh

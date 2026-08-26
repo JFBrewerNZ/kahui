@@ -139,8 +139,8 @@ serving history is the half of the bargain that keeps a community alive when oth
 go offline. A network of spectators is not a network.
 
 So members carry for each other. Each node asks its peers to dial it back (AutoNAT); if
-nobody can, it asks a member who *is* reachable to relay for it, and advertises the
-resulting address alongside its direct ones. The moment a relayed connection exists,
+nobody can, it asks the network for somebody who *is* reachable, takes a relay reservation
+from them, and advertises the resulting address alongside its direct ones. The moment a relayed connection exists,
 [DCUtR](https://libp2p.io/docs/dcutr/) uses it to coordinate a hole punch, and the relay
 drops out of the path.
 
@@ -164,15 +164,26 @@ else. One reachable member is enough for a community of people who are not.
 | Either has a public IPv6 address | ✅ dialled directly, nothing to configure |
 | Either router accepts PCP, NAT-PMP or UPnP | ✅ that node is reachable; the other dials it |
 | Neither does, but one forwards port 4001 by hand | ✅ same, and it survives restarts |
-| Neither, but a third member is reachable | ✅ relayed, then usually hole punched |
-| Neither, no third member, both behind carrier-grade NAT | ❌ nothing to build a path out of |
+| Neither, but *anybody* on the network is reachable | ✅ found through the hash table, relayed, then usually hole punched |
+| Nobody either of them can reach has ever been seen | ❌ nowhere to send the first packet |
 
-The last row is the honest limit. It is not particular to Kāhui: two machines that can only
-make outbound connections have nowhere to meet, which is why every peer-to-peer system ships
-either bootstrap nodes or relays. Kāhui's answer is that the reachable participant should be
-another member rather than us — and forwarding one port makes you that member.
+The fourth row is the one that changed in 0.8, and it is the one that matters. It used to
+say "a third *member*", and somebody had to introduce you to them by hand. Now every node
+that can be dialled joins a Kademlia distributed hash table and offers to carry for the ones
+that cannot, so a node behind a router looks up somebody reachable, gets carried by them, and
+becomes reachable itself. Nobody configures anything.
 
-See [hosting from home](docs/hosting-from-home.md), or
+That also means an invite no longer has to contain an address. A community id **is** the
+invite — `kahui inspect` prints it — and unlike an address it never goes stale.
+
+The last row is the honest limit, and it is IP's rather than Kāhui's: a program cannot find
+a stranger on the internet with no prior information, which is why BitTorrent, Bitcoin and
+Tox all ship starting points. Kāhui needs one address once, ever, and takes it from whichever
+comes first — a peer met on a previous run, the local network, an invite (which carries
+entry points), or `seeds.txt`. None of those is a service, and none of them is ours.
+
+See [finding each other](docs/discovery.md) for how that works,
+[hosting from home](docs/hosting-from-home.md) for routers that refuse everything, or
 [running on a server](docs/running-on-a-server.md) if you would rather a VPS did it.
 
 **A household where one device has a connection and the others do not** works today, and

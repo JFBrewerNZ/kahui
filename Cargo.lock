@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2851,7 +2851,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-desktop"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "directories",
  "kahui-node",
@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-net"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bs58",
  "crab_nat",
@@ -2880,6 +2880,7 @@ dependencies = [
  "netdev",
  "postcard",
  "serde",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -2887,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-node"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "futures",
  "kahui-net",
@@ -2905,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-proto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "blake3",
  "bs58",
@@ -2920,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "kahui-store"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "kahui-proto",
  "redb",
@@ -3022,6 +3023,7 @@ dependencies = [
  "libp2p-gossipsub",
  "libp2p-identify",
  "libp2p-identity",
+ "libp2p-kad",
  "libp2p-mdns",
  "libp2p-metrics",
  "libp2p-noise",
@@ -3219,6 +3221,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "libp2p-kad"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13d3fd632a5872ec804d37e7413ceea20588f69d027a0fa3c46f82574f4dee60"
+dependencies = [
+ "asynchronous-codec",
+ "bytes",
+ "either",
+ "fnv",
+ "futures",
+ "futures-bounded",
+ "futures-timer",
+ "libp2p-core",
+ "libp2p-identity",
+ "libp2p-swarm",
+ "quick-protobuf",
+ "quick-protobuf-codec",
+ "rand 0.8.7",
+ "sha2",
+ "smallvec",
+ "thiserror 2.0.20",
+ "tracing",
+ "uint",
+ "web-time",
+]
+
+[[package]]
 name = "libp2p-mdns"
 version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3249,6 +3278,7 @@ dependencies = [
  "libp2p-gossipsub",
  "libp2p-identify",
  "libp2p-identity",
+ "libp2p-kad",
  "libp2p-ping",
  "libp2p-relay",
  "libp2p-swarm",
@@ -6401,6 +6431,18 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "uint"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f9227a75a5a540a464c832ad4a4195dbdbecd8787610a56262721fde6f04f90"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "hex",
+ "static_assertions",
 ]
 
 [[package]]

@@ -62,6 +62,11 @@ pub struct Status {
     /// How many members we are carrying for. Nodes that can be reached pay this
     /// forward to the ones that cannot.
     pub relaying_for: usize,
+    /// How many nodes this one can route a lookup through.
+    ///
+    /// Zero means it has not found the network yet, and cannot be found by
+    /// somebody who only has a community id. Anything above zero means it can.
+    pub network_peers: usize,
 }
 
 /// Whether other people can open a connection to this node.

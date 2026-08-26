@@ -37,8 +37,6 @@ pub enum InviteError {
     Malformed(#[from] kahui_proto::CodecError),
     #[error("invite is version {found}, this client understands {INVITE_VERSION}")]
     UnsupportedVersion { found: u8 },
-    #[error("invite names no peers to connect to")]
-    NoPeers,
 }
 
 /// One member who was reachable when the invite was made.
@@ -102,6 +100,15 @@ impl Invite {
     pub fn decode(text: &str) -> Result<Self, InviteError> {
         let text = text.trim();
         let text = text.strip_prefix(LINK_PREFIX).unwrap_or(text);
+
+        // A bare community id is a valid invite now that the network can be
+        // asked who holds one. It is also the only form that never goes stale:
+        // addresses belong to machines and change, an id belongs to the
+        // community and does not.
+        if let Ok(community) = CommunityId::from_hex(text) {
+            return Ok(Invite::by_id(community));
+        }
+
         let body = text
             .strip_prefix(INVITE_PREFIX)
             .ok_or(InviteError::MissingPrefix)?;
@@ -112,10 +119,31 @@ impl Invite {
                 found: invite.version,
             });
         }
-        if invite.peers.is_empty() || invite.peers.iter().all(|p| p.addrs.is_empty()) {
-            return Err(InviteError::NoPeers);
-        }
         Ok(invite)
+    }
+
+    /// An invite that names a community and no route to it.
+    ///
+    /// Usable because the id is a key in the distributed hash table: whoever
+    /// receives this asks the network who holds the community rather than being
+    /// told where to look. See [`crate::discovery`].
+    pub fn by_id(community: CommunityId) -> Self {
+        Invite {
+            version: INVITE_VERSION,
+            community,
+            // The real name arrives with the community's own history, which is
+            // the only place it can be trusted from anyway.
+            name: String::new(),
+            peers: Vec::new(),
+        }
+    }
+
+    /// Whether this names anywhere to look, as opposed to only what to look for.
+    ///
+    /// Both kinds work. An invite with addresses connects faster; one without
+    /// keeps working after every address in it has changed.
+    pub fn has_addresses(&self) -> bool {
+        self.peers.iter().any(|peer| !peer.addrs.is_empty())
     }
 
     /// Whether anybody outside the minter's own network could use this.
@@ -285,12 +313,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_invite_with_nowhere_to_connect() {
+    fn an_invite_with_nowhere_to_connect_is_still_usable() {
+        // It used to be rejected, and that was right when the only way to reach
+        // a community was to be handed an address. Now the id can be looked up,
+        // so naming the community without naming a machine is a perfectly good
+        // invite — and the only one that does not go stale.
         let empty = Invite::new(CommunityId::from_bytes([7; 32]), "Kahui", Vec::new());
-        assert!(matches!(
-            Invite::decode(&empty.encode()),
-            Err(InviteError::NoPeers)
-        ));
+        let decoded = Invite::decode(&empty.encode()).expect("should decode");
+        assert_eq!(decoded.community, empty.community);
+        assert!(!decoded.has_addresses());
+    }
+
+    #[test]
+    fn a_bare_community_id_is_an_invite() {
+        let community = CommunityId::from_bytes([7; 32]);
+        let decoded = Invite::decode(&community.to_hex()).expect("hex should decode");
+        assert_eq!(decoded.community, community);
+        assert!(!decoded.has_addresses());
+
+        // And through a link, since that is how it will usually travel.
+        let linked = Invite::decode(&format!("{LINK_PREFIX}{}", community.to_hex()))
+            .expect("link should decode");
+        assert_eq!(linked.community, community);
+    }
+
+    #[test]
+    fn a_full_invite_still_names_where_to_look() {
+        // The id alone always works, but addresses make the first connection
+        // immediate rather than a lookup, so they are still worth carrying.
+        assert!(sample().has_addresses());
     }
 
     #[test]

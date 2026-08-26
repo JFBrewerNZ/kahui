@@ -55,7 +55,7 @@
       class="field invite mono"
       rows="4"
       bind:value={invite}
-      placeholder="kahui1…"
+      placeholder="kahui1… or a community id"
       spellcheck="false"
     ></textarea>
   {:else}

@@ -64,6 +64,10 @@ async fn spawn_with(
             enable_relay: true,
             // No router to ask in a test, and the search would only time out.
             enable_port_mapping: false,
+            // Off here on purpose. These tests pin down what happens with an
+            // exactly known topology; discovery is what removes the need for
+            // one, and is proved separately in `finding_strangers.rs`.
+            enable_dht: false,
             lan_reachable: false,
         },
         presence_interval: Duration::from_millis(400),

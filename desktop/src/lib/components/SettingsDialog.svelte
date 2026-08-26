@@ -121,6 +121,17 @@
       {#if syncNote}<span class="faint"> — {syncNote}</span>{/if}
     </dd>
 
+    <dt>Network</dt>
+    <dd>
+      {#if (kahui.status?.network_peers ?? 0) > 0}
+        <span class="good">on it</span>
+        <span class="faint">— {kahui.status?.network_peers} nodes known</span>
+      {:else}
+        not found yet
+        <div class="faint explain">People can only find you once you are on it.</div>
+      {/if}
+    </dd>
+
     <dt>Reachable</dt>
     <dd>
       <span class:good={kahui.standing.good}>{kahui.standing.label}</span>

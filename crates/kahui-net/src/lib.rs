@@ -24,6 +24,7 @@
 #![forbid(unsafe_code)]
 
 pub mod behaviour;
+pub mod discovery;
 pub mod invite;
 pub mod peer;
 pub mod portmap;
@@ -31,6 +32,9 @@ pub mod wire;
 
 pub use behaviour::{
     build_swarm, default_listen_addrs, Behaviour, BehaviourEvent, NetConfig, DEFAULT_PORT,
+};
+pub use discovery::{
+    add_seed, community_key, compiled_seeds, load_seeds, relay_key, KAD_PROTOCOL, SEED_FILE,
 };
 pub use invite::{
     addr_is_reachable_beyond_lan, Invite, InviteError, InvitePeer, INVITE_PREFIX, LINK_PREFIX,

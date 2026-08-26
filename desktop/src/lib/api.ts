@@ -70,6 +70,9 @@ export interface Status {
   relayed_by: string | null;
   /** How many members we are carrying for. */
   relaying_for: number;
+  /** Nodes we can route a lookup through. Zero means we have not found the
+   *  network yet and cannot be found by community id alone. */
+  network_peers: number;
 }
 
 export interface CheckRow {

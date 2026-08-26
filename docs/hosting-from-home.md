@@ -34,7 +34,7 @@ A node tries, in this order, without being asked:
 | **PCP** | RFC 6887. The newer of the two protocols for asking a router to open a port. |
 | **NAT-PMP** | RFC 6886. Older, and on plenty of routers it is the only one enabled. |
 | **UPnP-IGD** | The one most people have heard of. Tried with a timed lease first, then a permanent one, because many routers only support permanent mappings and answer `501` to anything else. |
-| **A relay** | If none of the above works, a member who *is* reachable carries your traffic until a direct connection can be punched through. |
+| **A relay** | If none of the above works, the network is asked for somebody who *is* reachable, and they carry your traffic until a direct connection can be punched through. You are not asked to find them. |
 
 Router support for the first four is a lottery, so all of them get asked. Any one
 succeeding is enough.
@@ -66,32 +66,33 @@ and forward that instead.
 Give your machine a static DHCP lease while you are in there, or the address the
 rule points at can change.
 
-### Let a member relay for you
+### Let the network carry you
 
-If you would rather not touch the router, you need one reachable node — anyone in
-the community whose `kahui doctor` says yes. Connect to them once:
+Usually nothing to do. Once your node has found the network at all, it looks up
+somebody reachable, takes a reservation from them, and hosts from behind your
+router as normal. **Settings → Network** says whether it has.
 
-**Settings → Connect to a peer**, then paste their address:
+It only needs one way in, once ever, and takes the first of these that works: a
+peer from a previous run, somebody on your own network, an invite you were sent,
+or `seeds.txt` in your data directory. If you are the very first person you know
+to run Kāhui and nobody has invited you, that last one is where to put an address
+— `kahui seeds --add /ip4/…/tcp/4001/p2p/12D3KooW…`, or **Settings → Connect to a
+peer**.
 
-```
-/ip4/203.0.113.4/tcp/4001/p2p/12D3KooW…
-```
-
-That node is remembered for good, across restarts and across every community, and
-you can host from behind your router as normal. Your invites will advertise a route
-through them until a direct connection takes over.
+After that it is remembered for good, and everything else is found rather than
+configured.
 
 ## The part that cannot be fixed
 
-If two people are both behind routers that refuse everything, and they have never
-met anything reachable, they cannot find each other. That is not a Kāhui
-limitation — no peer-to-peer system does it, because there is nowhere for the first
-packet to go. Tox and Briar ship lists of bootstrap nodes; Tailscale and iroh run
-relays; Scuttlebutt calls them pubs. All of it is somebody's infrastructure.
+A node has to know one address to begin with. Not a member's, not a server's —
+anybody's. There is no way around that: finding a stranger on the internet with no
+prior information is not something IP can do, which is why every peer-to-peer
+system ships starting points. Tox and Briar ship bootstrap lists; Tailscale and
+iroh run relays; Scuttlebutt calls them pubs.
 
-Kāhui's position is that the somebody should be another member, not us. So one
-participant has to be reachable. Forwarding a port is the cheapest way to be that
-participant, and it only takes one person per community.
+What Kāhui does differently is refuse to make that a service. A starting point here
+is an address in a text file, it can be any user's machine, and once you have met
+anybody at all you never need it again. See [finding each other](discovery.md).
 
 ## Checking it from outside
 

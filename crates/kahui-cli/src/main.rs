@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kahui_node::{NetConfig, Node, NodeConfig, Reachability};
+use libp2p::Multiaddr;
 use tracing_subscriber::EnvFilter;
 
 /// Directory used when neither `--data-dir` nor `KAHUI_DATA_DIR` is set.
@@ -153,6 +154,15 @@ enum Command {
     },
     /// Check whether people can reach this machine, and say what to change.
     Doctor,
+    /// Show or add the addresses used to find the network the first time.
+    ///
+    /// Rarely needed. A node that has met anybody remembers them, and one that
+    /// was invited was given a way in by the invite.
+    Seeds {
+        /// An address to add, like `/ip4/203.0.113.4/tcp/4001/p2p/12D3Koo…`.
+        #[arg(long)]
+        add: Option<String>,
+    },
 }
 
 impl Cli {
@@ -215,6 +225,29 @@ async fn main() -> Result<()> {
             node.shutdown().await.ok();
             Ok(())
         }
+        Some(Command::Seeds { ref add }) => {
+            let dir = cli.data_dir();
+            if let Some(addr) = add {
+                let addr: Multiaddr = addr.parse().context("that is not an address")?;
+                if kahui_net::add_seed(&dir, &addr)? {
+                    println!("added");
+                } else {
+                    println!("already there");
+                }
+            }
+
+            let seeds = kahui_net::load_seeds(&dir);
+            if seeds.is_empty() {
+                println!("no seeds set");
+                println!("{}", dir.join(kahui_net::SEED_FILE).display());
+            } else {
+                for seed in seeds {
+                    println!("{seed}");
+                }
+            }
+            node.shutdown().await.ok();
+            Ok(())
+        }
         Some(Command::Doctor) => {
             // The port actually bound, which is not always the one asked for:
             // a second node on one machine falls back to an OS-assigned one,
@@ -263,6 +296,9 @@ async fn main() -> Result<()> {
         Some(Command::Inspect { invite }) => {
             let invite = kahui_node::Invite::decode(&invite)?;
             println!("community : {} ({})", invite.name, invite.community.short());
+            // The full id is itself a usable invite, and the only form that
+            // never goes stale, so it is worth being able to copy out of here.
+            println!("id        : {}", invite.community.to_hex());
             println!("peers     : {}", invite.peers.len());
             for peer in &invite.peers {
                 println!("  {}", peer.peer_id);

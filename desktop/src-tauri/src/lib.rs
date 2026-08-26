@@ -398,14 +398,28 @@ async fn make_invite(
     community: CommunityId,
     state: State<'_, NodeState>,
 ) -> Result<InviteText, UiError> {
-    let invite = state.get().await?.invite(community).await?;
+    let node = state.get().await?;
+    let invite = node.invite(community).await?;
+    let on_the_network = on_the_network(&node).await;
     Ok(InviteText {
         token: invite.encode(),
         link: invite.to_link(),
         community_name: invite.name.clone(),
         peer_count: invite.peers.len(),
-        reachable: invite.reachable_beyond_lan(),
+        // Two quite different ways for this to work. Either the invite names an
+        // address somebody outside can dial, or this node is on the network and
+        // findable by the community id the invite carries — in which case the
+        // addresses are a shortcut rather than the mechanism.
+        reachable: invite.reachable_beyond_lan() || on_the_network,
     })
+}
+
+/// Whether this node can be found through the network rather than by address.
+async fn on_the_network(node: &kahui_node::NodeHandle) -> bool {
+    node.status()
+        .await
+        .map(|status| status.network_peers > 0)
+        .unwrap_or(false)
 }
 
 #[tauri::command]

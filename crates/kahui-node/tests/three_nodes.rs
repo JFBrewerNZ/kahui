@@ -44,6 +44,9 @@ async fn spawn(dir: &Path, name: &str) -> NodeHandle {
             // Nor their router. A loopback address would be skipped anyway, but
             // this test should not depend on that to keep its promise.
             enable_port_mapping: false,
+            // The milestone is about the protocol, not about discovery: these
+            // nodes are introduced by invite, which is what is being tested.
+            enable_dht: false,
             heartbeat: Duration::from_millis(300),
             ..NetConfig::default()
         },

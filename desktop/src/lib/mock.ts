@@ -104,6 +104,7 @@ const status: Status = {
   reachability: "direct",
   relayed_by: null,
   relaying_for: 1,
+  network_peers: 12,
 };
 
 const wait = <T>(value: T) => new Promise<T>((r) => setTimeout(() => r(value), 60));

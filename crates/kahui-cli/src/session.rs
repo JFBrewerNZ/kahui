@@ -413,10 +413,27 @@ impl Session {
             return Err(anyhow!("usage: /join <invite>"));
         }
         let invite = Invite::decode(token)?;
-        let name = invite.name.clone();
-        self.info(&format!("joining {name}; fetching history"));
+        // An invite that is only a community id carries no name, because the
+        // name lives in the community's own history and is not the sender's to
+        // assert. Show the id until the real one arrives.
+        let label = if invite.name.is_empty() {
+            invite.community.short()
+        } else {
+            invite.name.clone()
+        };
+        self.info(&format!("joining {label}; fetching history"));
         let community = self.node.join(invite).await?;
         self.focus_on(community).await?;
+
+        // By now the history is here, so the community can be called by its name.
+        let name = self
+            .node
+            .communities()
+            .await
+            .ok()
+            .and_then(|all| all.into_iter().find(|c| c.id == community))
+            .map(|c| c.name)
+            .unwrap_or(label);
         self.info(&format!("joined {name}"));
         Ok(())
     }
@@ -424,7 +441,17 @@ impl Session {
     async fn invite(&mut self) -> Result<()> {
         let focus = self.require_focus()?;
         let invite = self.node.invite(focus.community).await?;
-        let usable = invite.reachable_beyond_lan();
+        // An invite works either because it names a dialable address, or because
+        // this node is on the network and can be found by the community id it
+        // carries. Warning about the first while the second is true would be
+        // wrong, and the warning is only worth anything if it is accurate.
+        let on_the_network = self
+            .node
+            .status()
+            .await
+            .map(|status| status.network_peers > 0)
+            .unwrap_or(false);
+        let usable = invite.reachable_beyond_lan() || on_the_network;
 
         if self.json {
             self.emit(json!({
@@ -658,6 +685,9 @@ impl Session {
         print!("  reachable: {}", status.reachability.as_str());
         if let Some(peer) = &status.relayed_by {
             print!(" (relayed by {})", short_peer(peer));
+        }
+        if status.network_peers > 0 {
+            print!(", {} nodes known", status.network_peers);
         }
         if status.relaying_for > 0 {
             print!(", relaying for {}", status.relaying_for);

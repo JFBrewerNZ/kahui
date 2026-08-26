@@ -25,6 +25,7 @@ use kahui_net::{
 use kahui_proto::{ChannelId, CommunityId, Event, EventId, Identity, Payload, SignedEvent, UserId};
 use kahui_store::{Inserted, PeerRecord, Store};
 use libp2p::autonat::{self, NatStatus};
+use libp2p::kad;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::OutboundRequestId;
 use libp2p::swarm::SwarmEvent;
@@ -56,6 +57,10 @@ const RELAY_TARGET: usize = 2;
 /// Remembered relays to reconnect to at startup.
 const RELAY_MEMORY: usize = 8;
 
+/// How many unanswered hash table lookups to keep track of before giving up on
+/// the bookkeeping. Far above anything a real node reaches.
+const MAX_DHT_QUERIES: usize = 256;
+
 /// Members named in an invite, beyond ourselves.
 ///
 /// An invite that names several members keeps working after any one of them
@@ -74,6 +79,19 @@ enum Tick {
     PortMap(PortMapUpdate),
     PortMapStopped,
     Closed,
+}
+
+/// A question asked of the distributed hash table.
+#[derive(Clone, Copy, Debug)]
+enum DhtQuery {
+    /// "Who out there can be dialled, and is willing to carry for somebody?"
+    Relays,
+    /// "Who holds this community?" — how an invite with no addresses in it
+    /// still finds its members.
+    Community(CommunityId),
+    /// Filling in the routing table on startup. Nothing to do with the answer;
+    /// the point is the traffic it generates.
+    Warmup,
 }
 
 /// Events waiting on a predecessor that has not arrived yet.
@@ -174,6 +192,26 @@ pub(crate) struct Engine {
     /// the number the router has to be told about.
     port_map: Option<mpsc::Receiver<PortMapUpdate>>,
 
+    /// What each outstanding DHT lookup was for.
+    ///
+    /// Kademlia answers asynchronously and out of order, so the question has to
+    /// be remembered alongside the query id to make sense of the answer.
+    dht_queries: HashMap<kad::QueryId, DhtQuery>,
+
+    /// Whether what this node holds has been published to the hash table.
+    ///
+    /// The first attempt happens when a community is created or joined, which is
+    /// routinely before this node knows a single peer — and a publication with
+    /// nobody to publish to goes nowhere. So it is done again the moment the
+    /// routing table has anybody in it.
+    dht_announced: bool,
+
+    /// Whether we have told the DHT we can carry for other people.
+    ///
+    /// Tracked so that repeatedly confirming the same reachability does not
+    /// republish, and so the claim can be withdrawn if it stops being true.
+    offering_relay: bool,
+
     /// A port the router opened but would not give us an address for.
     ///
     /// Held until a peer tells us how we look from outside, at which point the
@@ -219,6 +257,9 @@ impl Engine {
             relayed_by: HashSet::new(),
             relaying_for: HashSet::new(),
             port_map: None,
+            dht_queries: HashMap::new(),
+            dht_announced: false,
+            offering_relay: false,
             mapped_port: None,
             shutdown_reply: None,
         }
@@ -269,6 +310,7 @@ impl Engine {
                 Tick::Presence => {
                     self.announce_presence();
                     self.redial_known_peers();
+                    self.dht_upkeep();
                     if self.relayed_by.is_empty() {
                         self.dial_known_relays();
                     }
@@ -311,6 +353,7 @@ impl Engine {
         // act on it now rather than waiting for probes to come back.
         if let Some(reachability) = self.config.reachability {
             self.reachability = reachability;
+            self.apply_reachability();
             self.announce_reachability();
         }
 
@@ -319,6 +362,9 @@ impl Engine {
         // hand out an invite that works: they are already relayed before the
         // community exists.
         self.dial_known_relays();
+
+        // And everybody else, through the hash table.
+        self.dht_bootstrap();
 
         let communities = match self.store.communities() {
             Ok(communities) => communities,
@@ -333,6 +379,7 @@ impl Engine {
             if let Err(err) = self.swarm.behaviour_mut().subscribe(&community.id) {
                 self.warn(format!("could not subscribe to {}: {err}", community.name));
             }
+            self.dht_provide(&community.id);
             self.dial_stored_peers(&community.id);
         }
 
@@ -344,6 +391,320 @@ impl Engine {
                 Err(err) => self.warn(format!("bootstrap address {addr}: {err}")),
             }
         }
+    }
+
+    // -- the distributed hash table -----------------------------------------
+    //
+    // The point of all of this is that a node needs no configuration and no
+    // address from a person. It finds somebody reachable, gets carried by them,
+    // and is then reachable itself. See `kahui_net::discovery`.
+
+    /// Puts everything we know into the routing table and starts a lookup.
+    ///
+    /// Kademlia cannot answer a question until it knows somebody to ask, so
+    /// every address this node has any claim to goes in first: peers from past
+    /// runs, members of communities we hold, the seed file, and anything given
+    /// on the command line. Which of them answers does not matter — one is
+    /// enough, and after that the table fills itself.
+    fn dht_bootstrap(&mut self) {
+        let mut known = 0;
+
+        for record in self.store.relays().unwrap_or_default() {
+            known += self.dht_add_record(&record);
+        }
+        for community in self.store.communities().unwrap_or_default() {
+            for record in self.store.peers(&community.id).unwrap_or_default() {
+                known += self.dht_add_record(&record);
+            }
+        }
+
+        // Seeds carry no peer id, so they cannot go straight into the routing
+        // table — dialling them is what teaches us who they are, and identify
+        // does the rest.
+        let seeds = kahui_net::load_seeds(&self.config.data_dir);
+        let seeds = seeds.into_iter().chain(kahui_net::compiled_seeds());
+        for addr in seeds {
+            if self.swarm.dial(addr.clone()).is_ok() {
+                known += 1;
+                debug!(%addr, "dialling a seed");
+            }
+        }
+
+        if known == 0 {
+            // Not fatal, and not even unusual on a first run. mDNS may find
+            // somebody, an invite may arrive, or a peer may dial us.
+            debug!("nobody to ask yet; waiting to be found");
+            return;
+        }
+
+        self.dht_ask(DhtQuery::Warmup, |kad| Some(kad.bootstrap().ok()?));
+    }
+
+    /// Teaches the routing table about one remembered peer.
+    fn dht_add_record(&mut self, record: &PeerRecord) -> usize {
+        let Ok(peer) = PeerId::from_bytes(&record.peer_id) else {
+            return 0;
+        };
+        if peer == *self.swarm.local_peer_id() {
+            return 0;
+        }
+
+        let mut added = 0;
+        for addr in &record.addrs {
+            if let Ok(addr) = addr.parse::<Multiaddr>() {
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    kad.add_address(&peer, addr);
+                    added = 1;
+                }
+            }
+        }
+        added
+    }
+
+    /// Runs a lookup and files what it was for.
+    fn dht_ask<F>(&mut self, what: DhtQuery, ask: F)
+    where
+        F: FnOnce(&mut kad::Behaviour<kad::store::MemoryStore>) -> Option<kad::QueryId>,
+    {
+        let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() else {
+            return;
+        };
+        if let Some(id) = ask(kad) {
+            self.dht_queries.insert(id, what);
+        }
+    }
+
+    /// Says, to anybody who asks the table, that this node holds a community.
+    ///
+    /// Every member does this, whether or not it can be dialled directly: a
+    /// node being carried by a relay publishes its circuit address, so it is
+    /// found and reached through that. This is what makes an invite able to
+    /// contain a community id and nothing else.
+    fn dht_provide(&mut self, community: &CommunityId) {
+        let key = kahui_net::community_key(community);
+        if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+            if let Err(err) = kad.start_providing(key) {
+                debug!(%err, "could not announce a community to the hash table");
+            }
+        }
+    }
+
+    /// Asks the table who holds a community.
+    fn dht_find(&mut self, community: CommunityId) {
+        let key = kahui_net::community_key(&community);
+        debug!(community = %community.short(), "asking the network who has this");
+        self.dht_ask(DhtQuery::Community(community), |kad| {
+            Some(kad.get_providers(key))
+        });
+    }
+
+    /// Asks the table who can carry for us.
+    fn dht_find_relays(&mut self) {
+        debug!("asking the network who can carry for us");
+        self.dht_ask(DhtQuery::Relays, |kad| {
+            Some(kad.get_providers(kahui_net::relay_key()))
+        });
+    }
+
+    /// Offers to carry for other people, and joins the routing table properly.
+    ///
+    /// Only a node that can actually be dialled does this. A node that claims a
+    /// place in the table and then cannot be reached is worse than absent: every
+    /// query routed through it stalls.
+    fn dht_offer_relay(&mut self) {
+        if self.offering_relay {
+            return;
+        }
+        self.offering_relay = true;
+
+        if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+            kad.set_mode(Some(kad::Mode::Server));
+            if let Err(err) = kad.start_providing(kahui_net::relay_key()) {
+                debug!(%err, "could not offer to carry for others");
+                self.offering_relay = false;
+                return;
+            }
+        }
+        info!("reachable, so now carrying part of the network for everybody else");
+    }
+
+    /// Stops claiming to be reachable, because we are not any more.
+    fn dht_withdraw_relay(&mut self) {
+        if !self.offering_relay {
+            return;
+        }
+        self.offering_relay = false;
+
+        if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+            kad.stop_providing(&kahui_net::relay_key());
+            kad.set_mode(Some(kad::Mode::Client));
+        }
+        debug!("no longer reachable, so no longer offering to carry");
+    }
+
+    /// Acts on an answer from the table.
+    fn handle_kad(&mut self, event: kad::Event) {
+        match event {
+            // Somebody dialable turned up. Worth remembering: this is how a node
+            // that has met nobody today still starts tomorrow with somewhere to
+            // go.
+            kad::Event::RoutingUpdated {
+                peer, addresses, ..
+            } => {
+                let addrs: Vec<Multiaddr> = addresses.into_vec();
+                debug!(%peer, count = addrs.len(), "the routing table learned somebody");
+                self.note_relay_candidate(peer, addrs);
+                // There is now somewhere for a publication to go.
+                self.dht_announce_everything();
+            }
+
+            kad::Event::OutboundQueryProgressed {
+                id, result, step, ..
+            } => {
+                self.handle_kad_result(id, result);
+                // Kademlia reports progress repeatedly and then finishes. Only
+                // the last word means the question is answered for good.
+                if step.last {
+                    self.dht_queries.remove(&id);
+                }
+            }
+
+            kad::Event::ModeChanged { new_mode } => {
+                debug!(%new_mode, "hash table mode changed");
+            }
+
+            _ => {}
+        }
+    }
+
+    /// Acts on the outcome of a lookup we started.
+    fn handle_kad_result(&mut self, id: kad::QueryId, result: kad::QueryResult) {
+        let providers = match result {
+            kad::QueryResult::GetProviders(Ok(kad::GetProvidersOk::FoundProviders {
+                providers,
+                ..
+            })) => providers,
+
+            kad::QueryResult::GetProviders(Ok(
+                kad::GetProvidersOk::FinishedWithNoAdditionalRecord { .. },
+            )) => {
+                // Whether this found anything was decided by the FoundProviders
+                // events that came before it.
+                return;
+            }
+
+            kad::QueryResult::StartProviding(Err(err)) => {
+                debug!(%err, "could not publish to the hash table");
+                return;
+            }
+
+            kad::QueryResult::Bootstrap(Err(_)) => {
+                // Nobody answered, which on a first run is ordinary.
+                return;
+            }
+
+            _ => return,
+        };
+
+        let Some(what) = self.dht_queries.get(&id).copied() else {
+            return;
+        };
+
+        for peer in providers {
+            if peer == *self.swarm.local_peer_id() {
+                continue;
+            }
+            match what {
+                DhtQuery::Relays => {
+                    debug!(%peer, "the network offered somebody who can carry");
+                    // Dial it: a reservation needs a live connection, and
+                    // identify will confirm it really speaks the relay protocol.
+                    let _ = self.swarm.dial(peer);
+                }
+                DhtQuery::Community(community) => {
+                    debug!(%peer, community = %community.short(), "found a member");
+                    let _ = self.swarm.dial(peer);
+                }
+                DhtQuery::Warmup => {}
+            }
+        }
+    }
+
+    /// How many nodes are in the routing table.
+    ///
+    /// The honest measure of whether this node is on the network at all, as
+    /// distinct from being connected to a handful of peers it was told about.
+    fn dht_peer_count(&mut self) -> usize {
+        self.swarm
+            .behaviour_mut()
+            .kad
+            .as_mut()
+            .map(|kad| kad.kbuckets().map(|bucket| bucket.num_entries()).sum())
+            .unwrap_or(0)
+    }
+
+    /// Publishes everything this node holds, now that somebody is listening.
+    ///
+    /// Cheap and idempotent, but pointless to repeat: Kademlia republishes on
+    /// its own schedule once the first announcement has landed.
+    fn dht_announce_everything(&mut self) {
+        if self.dht_announced || !self.swarm.behaviour().kad.is_enabled() {
+            return;
+        }
+        self.dht_announced = true;
+
+        for community in self.joined.iter().copied().collect::<Vec<_>>() {
+            self.dht_provide(&community);
+        }
+        if self.reachability == Reachability::Direct {
+            // Re-offer: the first attempt at start-up had no audience either.
+            self.offering_relay = false;
+            self.dht_offer_relay();
+        }
+    }
+
+    /// Asks again for anything still outstanding.
+    ///
+    /// A lookup made before the routing table had anybody in it comes back
+    /// empty, and on a cold start that is the normal case: the node has just
+    /// dialled its first peer and does not know anybody yet. Repeating the
+    /// question once the table has filled is the difference between joining by
+    /// community id reliably and joining by it only when the timing is lucky.
+    fn dht_upkeep(&mut self) {
+        if self.swarm.behaviour().kad.is_enabled() {
+            let waiting: Vec<CommunityId> = self.pending_joins.keys().copied().collect();
+            for community in waiting {
+                self.dht_find(community);
+            }
+
+            if self.reachability != Reachability::Direct && self.relay_listeners.is_empty() {
+                self.dht_find_relays();
+            }
+
+            // A node that started alone and has since met somebody still needs
+            // to say what it holds.
+            self.dht_announce_everything();
+        }
+
+        // Bound what an unanswered question can cost us. Queries time out inside
+        // Kademlia, so a lingering entry here is bookkeeping rather than a leak,
+        // but it should still not grow without limit on a long-running node.
+        if self.dht_queries.len() > MAX_DHT_QUERIES {
+            self.dht_queries.clear();
+        }
+    }
+
+    /// Records somebody who might be able to carry for us, and acts on it.
+    ///
+    /// Two quite different sources end up here — a peer whose `identify` says it
+    /// speaks the relay protocol, and a peer the hash table returned for the
+    /// relay key — because what we do about them is identical.
+    fn note_relay_candidate(&mut self, peer: PeerId, addrs: Vec<Multiaddr>) {
+        if peer == *self.swarm.local_peer_id() || addrs.is_empty() {
+            return;
+        }
+        self.relay_candidates.insert(peer, addrs);
+        self.seek_relay();
     }
 
     /// Files away a node that has carried for us, so the next run can go
@@ -368,6 +729,9 @@ impl Engine {
     }
 
     /// Reconnects to relays remembered from previous runs.
+    ///
+    /// Kept alongside the hash table rather than replaced by it: a node that
+    /// has been here before should not have to look anything up.
     fn dial_known_relays(&mut self) {
         let relays = match self.store.relays() {
             Ok(relays) => relays,
@@ -467,6 +831,15 @@ impl Engine {
                 if !self.listen_addrs.contains(&address) {
                     self.listen_addrs.push(address.clone());
                 }
+
+                // A relay reservation arrives as a listen address. Announcing it
+                // as an external one is what puts it in front of the hash table,
+                // and so what lets somebody behind a router be found and dialled
+                // by a stranger.
+                if address.iter().any(|part| part == Protocol::P2pCircuit) {
+                    self.swarm.add_external_address(address.clone());
+                }
+
                 self.start_port_mapping(&address);
                 self.emit(NodeEvent::Listening {
                     addr: address.to_string(),
@@ -560,15 +933,29 @@ impl Engine {
                 for addr in &info.listen_addrs {
                     self.swarm.add_peer_address(peer_id, addr.clone());
                 }
+
+                // Everybody we meet goes into the routing table, so that having
+                // met one node is enough to find every other. This is the step
+                // that turns a single seed into a network.
+                if info
+                    .protocols
+                    .iter()
+                    .any(|p| p.as_ref() == kahui_net::KAD_PROTOCOL)
+                {
+                    for addr in dialable(&info.listen_addrs) {
+                        if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                            kad.add_address(&peer_id, addr);
+                        }
+                    }
+                }
+
                 self.claim_mapped_port(&info.observed_addr);
 
                 // A peer that speaks the relay protocol can carry for us if we
                 // turn out to need it. `identify` already tells us who does, so
                 // nobody has to advertise anything.
                 if info.protocols.contains(&relay::HOP_PROTOCOL_NAME) {
-                    self.relay_candidates
-                        .insert(peer_id, dialable(&info.listen_addrs));
-                    self.seek_relay();
+                    self.note_relay_candidate(peer_id, dialable(&info.listen_addrs));
                 }
 
                 // What a peer sees as our address is a claim, not a fact --
@@ -582,6 +969,8 @@ impl Engine {
 
             // The router agreed to forward a port. This is the best possible
             // outcome: genuinely reachable, with nobody else involved.
+            SwarmEvent::Behaviour(BehaviourEvent::Kad(event)) => self.handle_kad(event),
+
             SwarmEvent::Behaviour(BehaviourEvent::Upnp(upnp::Event::NewExternalAddr(addr))) => {
                 debug!(%addr, "the router opened a port for us");
                 self.swarm.add_external_address(addr);
@@ -878,16 +1267,36 @@ impl Engine {
             return;
         }
         self.reachability = next;
-
-        match next {
-            Reachability::BehindNat => self.seek_relay(),
-            // Dialable on our own account now, so stop occupying a slot that
-            // somebody else may need.
-            Reachability::Direct => self.release_relays(),
-            Reachability::Unknown => {}
-        }
+        self.apply_reachability();
         self.announce_reachability();
         self.announce_presence();
+    }
+
+    /// Does whatever being reachable, or not, implies.
+    ///
+    /// Separate from [`Self::reachability_confirmed`] because an operator who
+    /// states their situation with `--reachable` must get exactly the same
+    /// consequences as one whose situation was discovered by probing. Skipping
+    /// them left such a node in the hash table's client mode: able to ask
+    /// questions, unable to hold an answer, and so invisible to everybody
+    /// looking for it.
+    fn apply_reachability(&mut self) {
+        match self.reachability {
+            Reachability::BehindNat => {
+                self.dht_withdraw_relay();
+                // Ask the whole network, not just the peers we happen to hold.
+                self.dht_find_relays();
+                self.seek_relay();
+            }
+            // Dialable on our own account, so stop occupying a slot somebody
+            // else may need — and start offering one, since being reachable is
+            // precisely what makes a node useful to everybody else.
+            Reachability::Direct => {
+                self.release_relays();
+                self.dht_offer_relay();
+            }
+            Reachability::Unknown => self.dht_withdraw_relay(),
+        }
     }
 
     /// Asks reachable members to carry for us.
@@ -1326,6 +1735,9 @@ impl Engine {
 
         self.joined.insert(community);
         self.swarm.behaviour_mut().subscribe(&community)?;
+        // Tell the network we hold it, so an invite need carry nothing but the
+        // id and people can find us without being handed an address.
+        self.dht_provide(&community);
 
         self.author(
             community,
@@ -1357,6 +1769,8 @@ impl Engine {
             return;
         }
 
+        self.dht_provide(&community);
+
         for addr in invite.dial_addresses() {
             match addr.parse::<Multiaddr>() {
                 Ok(addr) => {
@@ -1365,6 +1779,12 @@ impl Engine {
                 Err(err) => debug!(%err, "invite carried an unusable address"),
             }
         }
+
+        // And ask the network, in parallel. The addresses in an invite go stale
+        // — a laptop moves, a reservation lapses, the member who issued it is
+        // away — whereas the community id never does. This is what makes an
+        // invite work weeks after it was written.
+        self.dht_find(community);
 
         self.pending_joins.entry(community).or_default().push(reply);
         // If we already hold this community, there is nothing to wait for.
@@ -1467,6 +1887,34 @@ impl Engine {
             }
         }
 
+        // Reachable nodes we know of, whether or not they are in this community.
+        //
+        // They are not being named as members — they may never have heard of it
+        // — but as a way into the network. Somebody receiving this invite can
+        // reach them, and through them find everybody else, including members
+        // whose own addresses have changed since this invite was written. It is
+        // what makes being invited the same thing as being bootstrapped, so that
+        // nobody has to be handed a seed address by hand.
+        for record in self
+            .store
+            .relays()
+            .unwrap_or_default()
+            .into_iter()
+            .take(INVITE_PEERS)
+        {
+            let Ok(peer) = PeerId::from_bytes(&record.peer_id) else {
+                continue;
+            };
+            let peer = peer.to_string();
+            if record.addrs.is_empty() || peers.iter().any(|known| known.peer_id == peer) {
+                continue;
+            }
+            peers.push(InvitePeer {
+                peer_id: peer,
+                addrs: record.addrs,
+            });
+        }
+
         Ok(Invite::new(community, summary.name, peers))
     }
 
@@ -1511,7 +1959,7 @@ impl Engine {
             .collect())
     }
 
-    fn status(&self) -> Result<Status, NodeError> {
+    fn status(&mut self) -> Result<Status, NodeError> {
         let mut communities = Vec::new();
         for summary in self.store.communities()? {
             communities.push(CommunityStatus {
@@ -1537,6 +1985,7 @@ impl Engine {
             reachability: self.reachability,
             relayed_by: self.relayed_by.iter().next().map(|peer| peer.to_string()),
             relaying_for: self.relaying_for.len(),
+            network_peers: self.dht_peer_count(),
         })
     }
 
