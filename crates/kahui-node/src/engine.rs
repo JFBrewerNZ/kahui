@@ -437,7 +437,7 @@ impl Engine {
             return;
         }
 
-        self.dht_ask(DhtQuery::Warmup, |kad| Some(kad.bootstrap().ok()?));
+        self.dht_ask(DhtQuery::Warmup, |kad| kad.bootstrap().ok());
     }
 
     /// Teaches the routing table about one remembered peer.
@@ -1695,6 +1695,17 @@ impl Engine {
                     .parse::<Multiaddr>()
                     .map_err(|err| NodeError::Engine(format!("bad address {addr}: {err}")))
                     .and_then(|addr| {
+                        // Somebody typing an address in has told us a way into
+                        // the network, and being asked for it twice would be a
+                        // poor reward. Keep it, provided it names a peer — an
+                        // address without one cannot be dialled on a later run.
+                        if addr.iter().any(|part| matches!(part, Protocol::P2p(_))) {
+                            match kahui_net::add_seed(&self.config.data_dir, &addr) {
+                                Ok(true) => debug!(%addr, "keeping this as a way in"),
+                                Ok(false) => {}
+                                Err(err) => debug!(%err, "could not write the seed file"),
+                            }
+                        }
                         self.swarm
                             .dial(addr)
                             .map_err(|err| NodeError::Engine(err.to_string()))

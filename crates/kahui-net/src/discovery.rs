@@ -83,10 +83,12 @@ pub fn relay_key() -> kad::RecordKey {
 /// a well-distributed DHT key with no further work. This is what lets an invite
 /// contain no addresses at all: the id *is* the lookup.
 pub fn community_key(community: &CommunityId) -> kad::RecordKey {
-    let mut key = Vec::with_capacity(14 + 32);
+    const DOMAIN: &[u8] = b"kahui.community.v1";
+
+    let mut key = Vec::with_capacity(DOMAIN.len() + 32);
     // Domain-separated so a community id can never collide with another kind of
     // key this project might add later.
-    key.extend_from_slice(b"kahui.community.v1");
+    key.extend_from_slice(DOMAIN);
     key.extend_from_slice(community.as_bytes());
     kad::RecordKey::new(&key)
 }
