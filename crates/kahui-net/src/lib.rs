@@ -28,6 +28,7 @@ pub mod discovery;
 pub mod invite;
 pub mod peer;
 pub mod portmap;
+pub mod punch;
 pub mod wire;
 
 pub use behaviour::{
@@ -42,6 +43,7 @@ pub use invite::{
 };
 pub use peer::{libp2p_keypair, peer_id_of};
 pub use portmap::{diagnose, keep_open, Attempt, Diagnosis, MapProtocol, PortMapUpdate};
+pub use punch::{is_punchable, is_punchable_with, is_window};
 pub use wire::{
     topic_name, GossipMessage, Presence, SyncRequest, SyncResponse, MAX_SYNC_BATCH, SYNC_PROTOCOL,
 };

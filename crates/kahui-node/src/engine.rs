@@ -15,6 +15,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use kahui_net::behaviour::Behaviour;
@@ -65,6 +66,16 @@ const MAX_DHT_QUERIES: usize = 256;
 /// full of offline members cannot turn a tick into a flood of lookups.
 const MAX_PEERS_CHASED: usize = 4;
 
+/// How often to look at the clock and decide whether to punch.
+///
+/// Comfortably finer than the window in [`kahui_net::punch`], so a window is
+/// never stepped over.
+const PUNCH_CHECK: Duration = Duration::from_millis(100);
+
+/// How many peers to punch towards in one window. Bounded so a large community
+/// of offline members cannot turn into a burst of traffic.
+const MAX_PUNCHES: usize = 4;
+
 /// Members named in an invite, beyond ourselves.
 ///
 /// An invite that names several members keeps working after any one of them
@@ -82,6 +93,7 @@ enum Tick {
     AntiEntropy,
     PortMap(PortMapUpdate),
     PortMapStopped,
+    Punch,
     Closed,
 }
 
@@ -202,6 +214,18 @@ pub(crate) struct Engine {
     /// be remembered alongside the query id to make sense of the answer.
     dht_queries: HashMap<kad::QueryId, DhtQuery>,
 
+    /// Where our own router currently presents us, as peers have observed it.
+    ///
+    /// Held separately from the swarm's external addresses on purpose. These are
+    /// *not* addresses anybody can dial: a NAT drops packets from strangers, so
+    /// claiming them would produce invites that do not work. What they are good
+    /// for is telling a member who already knows us where to aim a simultaneous
+    /// dial — see [`kahui_net::punch`].
+    nat_addrs: HashSet<Multiaddr>,
+
+    /// Where each member's router presents them, for punching towards.
+    punch_targets: HashMap<PeerId, Vec<Multiaddr>>,
+
     /// Peers the hash table named that we have not managed to reach yet.
     ///
     /// A provider lookup answers with peer *ids* and throws the addresses away —
@@ -274,6 +298,8 @@ impl Engine {
             port_map: None,
             dht_queries: HashMap::new(),
             wanted_peers: HashSet::new(),
+            nat_addrs: HashSet::new(),
+            punch_targets: HashMap::new(),
             dht_announced: false,
             offering_relay: false,
             mapped_port: None,
@@ -286,8 +312,13 @@ impl Engine {
 
         let mut presence = tokio::time::interval(self.config.presence_interval);
         let mut anti_entropy = tokio::time::interval(self.config.sync_interval);
+        // Fast, because a punch has to happen at a particular instant rather
+        // than eventually. Cheap too: almost every tick decides there is nobody
+        // to punch towards and does nothing.
+        let mut punching = tokio::time::interval(PUNCH_CHECK);
         presence.set_missed_tick_behavior(MissedTickBehavior::Delay);
         anti_entropy.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        punching.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             // Each branch borrows a different field, and the select yields an
@@ -301,6 +332,7 @@ impl Engine {
                 event = self.swarm.select_next_some() => Tick::Swarm(Box::new(event)),
                 _ = presence.tick() => Tick::Presence,
                 _ = anti_entropy.tick() => Tick::AntiEntropy,
+                _ = punching.tick() => Tick::Punch,
                 // Only ever ready once the mapper is running. `pending()` keeps
                 // this branch inert rather than making the whole loop optional.
                 update = async {
@@ -321,6 +353,7 @@ impl Engine {
                     }
                 }
                 Tick::Swarm(event) => self.handle_swarm(*event),
+                Tick::Punch => self.punch_round(),
                 Tick::PortMap(update) => self.handle_port_map(update),
                 Tick::PortMapStopped => self.port_map = None,
                 Tick::Presence => {
@@ -723,6 +756,61 @@ impl Engine {
         }
     }
 
+    /// Whether an address is somewhere a punch could land.
+    ///
+    /// Defers to the same judgement about private addresses that the rest of the
+    /// node makes: on an isolated network they are the real ones.
+    fn punchable(&self, addr: &Multiaddr) -> bool {
+        kahui_net::is_punchable_with(addr, self.config.net.lan_reachable)
+    }
+
+    /// Dials, at an agreed instant, anybody we cannot otherwise reach.
+    ///
+    /// This is the whole of the no-middleman reconnection. Both sides work out
+    /// the same moment from the pair of peer ids and the clock — see
+    /// [`kahui_net::punch`] — so no message has to pass between them to arrange
+    /// it, which is fortunate, because if one could pass they would not need
+    /// this. Each dial opens the caller's own router on the way out, and the two
+    /// packets cross in flight.
+    ///
+    /// Runs often and does nothing nearly every time: the common case is that
+    /// there is nobody unreachable to punch towards.
+    fn punch_round(&mut self) {
+        if self.punch_targets.is_empty() {
+            return;
+        }
+
+        let me = *self.swarm.local_peer_id();
+        let now = now_ms();
+
+        let due: Vec<(PeerId, Vec<Multiaddr>)> = self
+            .punch_targets
+            .iter()
+            .filter(|(peer, _)| !self.swarm.is_connected(peer))
+            .filter(|(peer, _)| kahui_net::is_window(&me, peer, now))
+            .map(|(peer, addrs)| (*peer, addrs.clone()))
+            .take(MAX_PUNCHES)
+            .collect();
+
+        for (peer, addrs) in due {
+            for addr in addrs {
+                // Aim at the peer explicitly, so that if the hole opens the
+                // connection is authenticated as theirs and not merely as
+                // whoever answers at that address.
+                let target = addr.clone().with(Protocol::P2p(peer));
+                match self.swarm.dial(target) {
+                    Ok(()) => debug!(%peer, %addr, "punching"),
+                    Err(err) => debug!(%peer, %err, "could not punch"),
+                }
+            }
+        }
+    }
+
+    /// Stops punching towards somebody we have reached.
+    fn punching_done(&mut self, peer: &PeerId) {
+        self.punch_targets.remove(peer);
+    }
+
     /// Asks again for anything still outstanding.
     ///
     /// A lookup made before the routing table had anybody in it comes back
@@ -858,6 +946,7 @@ impl Engine {
         let message = GossipMessage::Presence(Presence {
             user: self.me,
             addrs,
+            punch: self.nat_addrs.iter().map(|a| a.to_string()).collect(),
             event_count,
             announced_at_ms: now_ms(),
         });
@@ -914,6 +1003,8 @@ impl Engine {
                 ..
             } => {
                 self.remember_peer(peer_id, &[endpoint.get_remote_address().clone()]);
+                // Reached them, so stop aiming at their router.
+                self.punching_done(&peer_id);
                 // A peer reachable over both TCP and QUIC establishes several
                 // connections. Only the first means "this peer is now here";
                 // the rest are the same peer arriving again by another road.
@@ -1025,6 +1116,13 @@ impl Engine {
                 // treated as ours.
                 if self.reachability == Reachability::Direct {
                     self.swarm.add_external_address(info.observed_addr);
+                } else if self.punchable(&info.observed_addr) {
+                    // Not dialable, but worth keeping. It is where our router
+                    // presents us, which is precisely what somebody needs in
+                    // order to punch a hole to us at an agreed moment.
+                    if self.nat_addrs.insert(info.observed_addr.clone()) {
+                        debug!(addr = %info.observed_addr, "learned where our router puts us");
+                    }
                 }
             }
 
@@ -1162,9 +1260,27 @@ impl Engine {
             .filter_map(|addr| addr.parse().ok())
             .collect();
 
+        // Where their router presents them. Not dialable now, but the target
+        // for a simultaneous dial later, so it is kept with everything else we
+        // know about them and survives a restart.
+        let punch: Vec<Multiaddr> = presence
+            .punch
+            .iter()
+            .filter_map(|addr| addr.parse().ok())
+            .filter(|addr| self.punchable(addr))
+            .collect();
+
+        if !punch.is_empty() {
+            self.punch_targets.insert(peer, punch.clone());
+        }
+
         let record = PeerRecord {
             peer_id: peer.to_bytes(),
-            addrs: addrs.iter().map(|a| a.to_string()).collect(),
+            addrs: addrs
+                .iter()
+                .chain(punch.iter())
+                .map(|a| a.to_string())
+                .collect(),
             last_seen_ms: now_ms(),
         };
         if let Err(err) = self.store.remember_peer(&community, &record) {

@@ -165,6 +165,7 @@ else. One reachable member is enough for a community of people who are not.
 | Either router accepts PCP, NAT-PMP or UPnP | ✅ that node is reachable; the other dials it |
 | Neither does, but one forwards port 4001 by hand | ✅ same, and it survives restarts |
 | Neither, but *anybody* on the network is reachable | ✅ found through the hash table, relayed, then usually hole punched |
+| Neither, and the member who introduced them has gone | ✅ they dial each other at an instant both calculate, with nobody in the middle |
 | Nobody either of them can reach has ever been seen | ❌ nowhere to send the first packet |
 
 The fourth row is the one that changed in 0.8, and it is the one that matters. It used to

@@ -209,6 +209,113 @@ async fn jane_and_juan_keep_talking_through_somebody_who_is_not_even_a_member() 
     }
 }
 
+/// Jane and Juan alone, with nobody in the middle at all.
+///
+/// This is the question the design has to answer. Bob introduces them and then
+/// leaves for good; there is no relay, no other member, and no other Kāhui node
+/// of any kind. They keep talking because each already holds the address the
+/// other's router presents, and both work out the same instant to dial from the
+/// pair of peer ids and the clock — so no message has to pass between them to
+/// arrange it. See `kahui_net::punch`.
+///
+/// What this cannot show is a real NAT opening, because two nodes on one machine
+/// have no NAT between them. The arithmetic that makes both sides pick the same
+/// moment is tested directly in `kahui_net::punch`; the behaviour of the routers
+/// themselves is the ordinary hole punch every peer-to-peer system relies on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn jane_and_juan_reconnect_with_nobody_in_the_middle() {
+    let root = TempDir::new().unwrap();
+    let dir = |name: &str| root.path().join(name);
+
+    let bob = spawn(
+        &dir("bob"),
+        "bob",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::Direct,
+        vec![],
+    )
+    .await;
+
+    // Wait for his listener before minting the link. Without this the link
+    // sometimes names nowhere at all, and the test ends up measuring something
+    // quite different from what it claims to.
+    address_of(&bob, "bob").await;
+
+    let art = bob
+        .create_community("Art", "")
+        .await
+        .expect("bob starts it");
+    let general = bob.channels(art).await.unwrap()[0].id;
+    bob.post(art, general, "bob: introducing you two")
+        .await
+        .unwrap();
+    let link = bob.invite(art).await.unwrap().to_link();
+    assert!(
+        Invite::decode(&link).unwrap().has_addresses(),
+        "bob's link must name where to find him"
+    );
+
+    // Both behind routers. They can dial out and they do listen, which is what
+    // a punched hole amounts to — what they cannot do is be dialled out of the
+    // blue, and nobody here ever tells the other where to look except through
+    // Bob, who leaves.
+    let jane = spawn(
+        &dir("jane"),
+        "jane",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::BehindNat,
+        vec![],
+    )
+    .await;
+    let juan = spawn(
+        &dir("juan"),
+        "juan",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::BehindNat,
+        vec![],
+    )
+    .await;
+
+    jane.join(Invite::decode(&link).unwrap())
+        .await
+        .expect("jane joins");
+    juan.join(Invite::decode(&link).unwrap())
+        .await
+        .expect("juan joins");
+
+    eventually("both to hear bob", || async {
+        texts(&jane, art, general).await.len() == 1 && texts(&juan, art, general).await.len() == 1
+    })
+    .await;
+
+    // --- Bob leaves, and there is now nobody else in the world -------------
+    bob.shutdown().await.ok();
+
+    jane.post(art, general, "jane: bob has gone")
+        .await
+        .expect("jane can still post");
+
+    eventually("juan to hear jane with nobody in the middle", || async {
+        texts(&juan, art, general).await.len() == 2
+    })
+    .await;
+
+    juan.post(art, general, "juan: still here").await.unwrap();
+    eventually("jane to hear juan back", || async {
+        texts(&jane, art, general).await.len() == 3
+    })
+    .await;
+
+    assert_eq!(
+        texts(&jane, art, general).await,
+        texts(&juan, art, general).await
+    );
+
+    for node in [&jane, &juan] {
+        node.shutdown().await.ok();
+    }
+}
+
 /// The worst case: nobody reachable is left at all.
 ///
 /// Neither Jane nor Juan can be dialled and there is no third party of any kind,

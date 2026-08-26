@@ -62,6 +62,17 @@ pub struct Presence {
     /// Multiaddresses to reach them on, as strings so this stays independent of
     /// any one libp2p version's address type.
     pub addrs: Vec<String>,
+    /// Where this member's own router currently maps them.
+    ///
+    /// Kept apart from `addrs` because it is a different kind of claim. An entry
+    /// in `addrs` says "you can dial me here". These say only "this is where my
+    /// router presents me at the moment" — nobody can dial them out of the blue,
+    /// because a NAT drops packets from strangers. What they are good for is
+    /// [`crate::punch`]: two members who both hold each other's can open a
+    /// direct connection by dialling at the same instant, with nobody in the
+    /// middle. That is what lets a pair who can neither of them be dialled keep
+    /// talking after the member who introduced them has gone.
+    pub punch: Vec<String>,
     /// How many events they hold. A cheap hint that we may be behind; the
     /// authoritative comparison is the frontier exchanged during sync.
     pub event_count: u64,
@@ -158,6 +169,7 @@ mod tests {
         let presence = Presence {
             user: Identity::generate().user_id(),
             addrs: vec!["/ip4/127.0.0.1/tcp/4001".into()],
+            punch: vec!["/ip4/93.184.216.34/udp/4001/quic-v1".into()],
             event_count: 12,
             announced_at_ms: 1_700_000_000_000,
         };
@@ -167,6 +179,9 @@ mod tests {
             GossipMessage::Presence(p) => {
                 assert_eq!(p.user, presence.user);
                 assert_eq!(p.addrs, presence.addrs);
+                // Where the sender's router puts them, which is what a peer
+                // aims at when neither of them can be dialled.
+                assert_eq!(p.punch, presence.punch);
                 assert_eq!(p.event_count, 12);
             }
             other => panic!("decoded as {other:?}"),
@@ -180,6 +195,7 @@ mod tests {
             GossipMessage::Presence(Presence {
                 user,
                 addrs: vec!["/ip4/127.0.0.1/tcp/4001".into()],
+                punch: Vec::new(),
                 event_count: 12,
                 announced_at_ms: at,
             })

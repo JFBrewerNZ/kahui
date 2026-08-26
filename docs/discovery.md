@@ -56,6 +56,42 @@ link, and it works. Invites still carry addresses because they make the first
 connection immediate rather than a lookup — but they are a shortcut now, not the
 mechanism, and an invite keeps working long after every address in it has changed.
 
+## Two people who can neither of them be dialled
+
+The hard case: Jane and Juan are both behind routers that refuse to open a port,
+and the member who introduced them has gone. Neither can accept a connection, so
+there is nothing to dial.
+
+They connect anyway, and without anybody in the middle.
+
+A NAT does not block everything — it drops packets from strangers and forwards
+packets from people you have already written to. So if Jane sends to Juan at the
+same moment Juan sends to Jane, each router sees an outgoing packet first and
+treats the other's arriving packet as the reply. Both holes open at once. This is
+hole punching, and every peer-to-peer system does it.
+
+What normally makes it need a server is that each side has to know two things:
+where the other is, and *when* to fire. Neither has to come from a server:
+
+- **Where** was learned the first time they met. Any peer you talk to can see the
+  address your router presents for you and tell you what it is, and that gets
+  gossiped like anything else. Jane and Juan met once through Bob, so each holds
+  the other's already.
+- **When** is not communicated at all — it is *calculated*. Both sides feed the
+  same two peer ids and the clock into the same function and get the same
+  instant. Jane works out when to dial Juan; Juan independently works out the
+  same moment; both fire. Nothing passes between them, which is just as well,
+  because if it could they would not need this.
+
+After one meeting, ever, they can re-establish a direct connection for as long as
+they both keep running, with nobody in the middle.
+
+Two honest limits. This reconnects people who have met — it is not a way for
+strangers to meet. And it does not beat a *symmetric* NAT, which allocates a
+different external port per destination, so the address learned through Bob is
+not the one Juan would have to aim at. Most home routers are not symmetric; some
+are, and for those the relay path remains the answer.
+
 ## The one thing that cannot be conjured
 
 A lookup has to be sent somewhere. A program cannot find a stranger on the
