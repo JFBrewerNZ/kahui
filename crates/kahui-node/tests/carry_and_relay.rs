@@ -24,7 +24,14 @@ use kahui_node::{ChannelId, NetConfig, Node, NodeConfig, NodeHandle, Reachabilit
 use kahui_proto::CommunityId;
 use tempfile::TempDir;
 
-const PATIENCE: Duration = Duration::from_secs(60);
+/// How long to wait before calling something stuck.
+///
+/// Generous because these tests set up relay reservations and hole punches over
+/// real sockets, and a shared CI runner under load can take far longer at it
+/// than any developer's machine. Sixty seconds was enough locally and on Linux
+/// and Windows, and occasionally not enough on macOS — a flaky test blocks
+/// releases for no information, which is worse than a slow one.
+const PATIENCE: Duration = Duration::from_secs(120);
 
 /// Starts a node with discovery limited to what the protocol provides.
 async fn spawn(dir: &Path, name: &str, reachability: Option<Reachability>) -> NodeHandle {
