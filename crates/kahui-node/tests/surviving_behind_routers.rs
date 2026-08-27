@@ -316,6 +316,98 @@ async fn jane_and_juan_reconnect_with_nobody_in_the_middle() {
     }
 }
 
+/// Nobody behind a router may be chosen to carry for somebody else.
+///
+/// Every Kāhui node speaks the relay protocol, so `identify` cheerfully reports
+/// that everybody could carry — including people who cannot be dialled at all.
+/// Taking that at face value produced confident nonsense on a real network: two
+/// desktops in different houses reserved through *each other*, using addresses
+/// like `10.1.180.11` that neither could reach, both then believed they were
+/// carried, and the one node that could actually have helped went unused.
+///
+/// So the test is not "did somebody carry for them" but "who". It has to be the
+/// node that can be reached.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn somebody_behind_a_router_is_never_chosen_to_carry() {
+    let root = TempDir::new().unwrap();
+    let dir = |name: &str| root.path().join(name);
+
+    let hub = spawn(
+        &dir("hub"),
+        "hub",
+        vec!["/ip4/127.0.0.1/tcp/0"],
+        Reachability::Direct,
+        vec![],
+    )
+    .await;
+    let hub_addr = address_of(&hub, "hub").await;
+    let hub_peer = hub.status().await.unwrap().peer_id;
+
+    let art = hub
+        .create_community("Art", "")
+        .await
+        .expect("hub starts it");
+    let link = hub.invite(art).await.unwrap().to_link();
+
+    // Neither can be dialled by anybody, including each other.
+    let jane = spawn(
+        &dir("jane"),
+        "jane",
+        vec![],
+        Reachability::BehindNat,
+        vec![hub_addr.clone()],
+    )
+    .await;
+    let juan = spawn(
+        &dir("juan"),
+        "juan",
+        vec![],
+        Reachability::BehindNat,
+        vec![hub_addr],
+    )
+    .await;
+
+    jane.join(Invite::decode(&link).unwrap())
+        .await
+        .expect("jane joins");
+    juan.join(Invite::decode(&link).unwrap())
+        .await
+        .expect("juan joins");
+
+    for (name, node) in [("jane", &jane), ("juan", &juan)] {
+        eventually(&format!("{name} to be carried by the hub"), || async {
+            node.status()
+                .await
+                .map(|s| s.relayed_by.as_deref() == Some(hub_peer.as_str()))
+                .unwrap_or(false)
+        })
+        .await;
+    }
+
+    // And having settled, still nobody unreachable is doing the carrying.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let jane_peer = jane.status().await.unwrap().peer_id;
+    let juan_peer = juan.status().await.unwrap().peer_id;
+
+    for (name, node, other) in [("jane", &jane, &juan_peer), ("juan", &juan, &jane_peer)] {
+        let carried_by = node.status().await.unwrap().relayed_by;
+        assert_ne!(
+            carried_by.as_deref(),
+            Some(other.as_str()),
+            "{name} should not be relayed by somebody who cannot be dialled"
+        );
+        assert_eq!(
+            carried_by.as_deref(),
+            Some(hub_peer.as_str()),
+            "{name} should be relayed by the one node that can be reached"
+        );
+    }
+
+    for node in [&hub, &jane, &juan] {
+        node.shutdown().await.ok();
+    }
+}
+
 /// The worst case: nobody reachable is left at all.
 ///
 /// Neither Jane nor Juan can be dialled and there is no third party of any kind,

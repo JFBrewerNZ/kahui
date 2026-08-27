@@ -230,6 +230,19 @@ pub(crate) struct Engine {
     /// record in the network pointing somewhere this node no longer is.
     published_addrs: Vec<Multiaddr>,
 
+    /// Peers we hold a connection to that does not pass through anybody else,
+    /// and the address it was made on.
+    ///
+    /// This is the honest test of "can I reach you", and it is the one that
+    /// decides who may be asked to relay. Every Kāhui node speaks the relay
+    /// protocol, so `identify` reports that everybody could carry — including
+    /// people who cannot be dialled themselves. Believing that is worse than
+    /// useless: two machines behind routers reserve through each other, both
+    /// conclude they are carried, and neither ever finds a path. Observed
+    /// exactly so, with one desktop reserving through another desktop's
+    /// `10.1.180.11` while the reachable node went unused.
+    direct_peers: HashMap<PeerId, Multiaddr>,
+
     /// Where each member's router presents them, for punching towards.
     punch_targets: HashMap<PeerId, Vec<Multiaddr>>,
 
@@ -307,6 +320,7 @@ impl Engine {
             wanted_peers: HashSet::new(),
             nat_addrs: HashSet::new(),
             punch_targets: HashMap::new(),
+            direct_peers: HashMap::new(),
             published_addrs: Vec::new(),
             dht_announced: false,
             offering_relay: false,
@@ -680,6 +694,9 @@ impl Engine {
             }
             match what {
                 DhtQuery::Relays => {
+                    // Worth more than a peer who merely speaks the protocol:
+                    // to be in the table at all a node has to be dialable, and
+                    // it published itself under the relay key deliberately.
                     debug!(%peer, "the network offered somebody who can carry");
                     self.want_peer(peer);
                 }
@@ -1047,9 +1064,18 @@ impl Engine {
                 num_established,
                 ..
             } => {
-                self.remember_peer(peer_id, &[endpoint.get_remote_address().clone()]);
+                let remote = endpoint.get_remote_address().clone();
+                self.remember_peer(peer_id, &[remote.clone()]);
                 // Reached them, so stop aiming at their router.
                 self.punching_done(&peer_id);
+
+                // A connection made through somebody else proves nothing about
+                // whether this peer can be reached, and a circuit cannot carry
+                // another circuit anyway.
+                if !is_circuit(&remote) {
+                    self.direct_peers.insert(peer_id, remote);
+                    self.seek_relay();
+                }
                 // A peer reachable over both TCP and QUIC establishes several
                 // connections. Only the first means "this peer is now here";
                 // the rest are the same peer arriving again by another road.
@@ -1070,6 +1096,7 @@ impl Engine {
                 num_established: 0,
                 ..
             } => {
+                self.direct_peers.remove(&peer_id);
                 self.emit(NodeEvent::PeerDisconnected {
                     peer: peer_id.to_string(),
                 });
@@ -1537,15 +1564,23 @@ impl Engine {
             return;
         }
 
+        // Only somebody we are talking to right now over a connection that
+        // does not itself pass through anybody else. Everything weaker than
+        // that has been tried and produces confident nonsense.
         let candidates: Vec<(PeerId, Vec<Multiaddr>)> = self
             .relay_candidates
             .iter()
-            .filter(|(peer, addrs)| {
-                !addrs.is_empty()
-                    && !self.relay_listeners.contains_key(peer)
-                    && self.swarm.is_connected(peer)
+            .filter(|(peer, _)| !self.relay_listeners.contains_key(peer))
+            .filter_map(|(peer, advertised)| {
+                let live = self.direct_peers.get(peer)?;
+                // The address the connection was actually made on comes first,
+                // because it is the one address known to work. The rest are
+                // what they claim, kept as fallbacks and stripped of circuits.
+                let mut addrs = vec![live.clone()];
+                addrs.extend(advertised.iter().filter(|a| !is_circuit(a)).cloned());
+                addrs.dedup();
+                Some((*peer, addrs))
             })
-            .map(|(peer, addrs)| (*peer, addrs.clone()))
             .collect();
 
         for (peer, addrs) in candidates {
@@ -1560,7 +1595,12 @@ impl Engine {
                         self.relay_listeners.insert(peer, listener);
                         break;
                     }
-                    Err(err) => debug!(%peer, %err, "could not ask that member to relay"),
+                    // The address matters as much as the error: a refusal
+                    // that names neither is impossible to act on, which is
+                    // exactly the position this left somebody in.
+                    Err(err) => {
+                        debug!(%peer, %circuit, error = ?err, "could not ask that member to relay")
+                    }
                 }
             }
         }
